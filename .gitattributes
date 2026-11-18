@@ -1,0 +1,6 @@
+# Keep LF in the repo and on checkout; Rust, shell and generated bindings all expect it.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.icns binary

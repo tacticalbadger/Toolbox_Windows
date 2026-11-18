@@ -1,0 +1,83 @@
+[package]
+name = "toolbox-core"
+version = "0.1.0"
+edition = "2021"
+description = "Connection engine for Toolbox: SSH, RDP, VNC, vault and providers"
+license = "MIT"
+
+[lib]
+name = "toolbox_core"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[[example]]
+name = "rdp_server"
+required-features = ["test-support"]
+
+[[example]]
+name = "echo_server"
+required-features = ["test-support"]
+
+[[example]]
+name = "ftp_server"
+required-features = ["test-support"]
+
+[[test]]
+name = "ftp"
+required-features = ["test-support"]
+
+[[test]]
+name = "sftp"
+required-features = ["test-support"]
+
+[[test]]
+name = "rdp_session"
+required-features = ["test-support"]
+
+[features]
+default = []
+cli = ["uniffi/cli"]
+# In-process RDP server for tests and the `rdp_server` example.
+test-support = ["ironrdp/server", "ironrdp/acceptor", "dep:rcgen", "dep:async-trait", "dep:tempfile", "dep:libunftp", "dep:unftp-sbe-fs", "dep:unftp-core"]
+
+[dependencies]
+uniffi = { version = "0.32", features = ["tokio"] }
+russh = "0.65"
+russh-sftp = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "process", "fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+log = "0.4"
+ldap3 = { version = "0.12", default-features = false, features = ["tls-native"] }
+chacha20poly1305 = "0.10"
+zeroize = "1"
+base64 = "0.22"
+rand = "0.10"
+# IronRDP is pinned to one git commit: the published crates come from two
+# release generations that cannot be mixed, and the server used by the tests
+# is not on crates.io yet.
+ironrdp = { git = "https://github.com/Devolutions/IronRDP", rev = "0a79fd2178c79b3d8920b6e76f2a9da5db6331ca", features = ["connector", "session", "graphics", "input", "svc", "dvc", "displaycontrol", "pdu", "core"] }
+ironrdp-tokio = { git = "https://github.com/Devolutions/IronRDP", rev = "0a79fd2178c79b3d8920b6e76f2a9da5db6331ca", features = ["reqwest-native-tls"] }
+ironrdp-tls = { git = "https://github.com/Devolutions/IronRDP", rev = "0a79fd2178c79b3d8920b6e76f2a9da5db6331ca", features = ["native-tls"] }
+x509-cert = { version = "0.3", default-features = false, features = ["std"] }
+rcgen = { version = "0.14", optional = true }
+tempfile = { version = "3", optional = true }
+async-trait = { version = "0.1", optional = true }
+bytes = "1"
+# FTP and explicit FTPS for File Transfer connections.
+suppaftp = { version = "12", features = ["tokio-async-native-tls"] }
+async-native-tls = { version = "0.6", default-features = false, features = ["runtime-tokio"] }
+# In-process FTP server for tests and the `ftp_server` example.
+libunftp = { version = "0.25", optional = true }
+unftp-sbe-fs = { version = "0.4", optional = true }
+unftp-core = { version = "0.1", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+rand = "0.10"

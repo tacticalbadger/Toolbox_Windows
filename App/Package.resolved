@@ -1,0 +1,68 @@
+{
+  "originHash" : "81906de135fa574e3063114772539ef8c8813462a3c0b9cdb17e48ef3566e25e",
+  "pins" : [
+    {
+      "identity" : "cryptoswift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/royalapplications/CryptoSwift.git",
+      "state" : {
+        "branch" : "foundationessentials",
+        "revision" : "a59b4d91ebb22011656c830f874fe7152e183a57"
+      }
+    },
+    {
+      "identity" : "h",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rarestype/h",
+      "state" : {
+        "revision" : "aa3626829160917d4378330617971977cbd78f5b",
+        "version" : "1.0.1"
+      }
+    },
+    {
+      "identity" : "royalvnc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/royalapplications/royalvnc",
+      "state" : {
+        "revision" : "92d4427c73817d8f849bb289ff190aa4b40c44ea"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser",
+      "state" : {
+        "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+        "version" : "1.8.2"
+      }
+    },
+    {
+      "identity" : "swift-jpeg",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tayloraswift/swift-jpeg",
+      "state" : {
+        "revision" : "07c12729a5650a56e1f54b9841cb7eb68449440a",
+        "version" : "2.1.0"
+      }
+    },
+    {
+      "identity" : "swift-png",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tayloraswift/swift-png",
+      "state" : {
+        "revision" : "2d17c6c51c098628574c0383f1119892655a73a2",
+        "version" : "4.5.2"
+      }
+    },
+    {
+      "identity" : "swiftterm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/migueldeicaza/SwiftTerm",
+      "state" : {
+        "revision" : "282c3c3a932b55c129628876b70f37d993af1615",
+        "version" : "1.99.3"
+      }
+    }
+  ],
+  "version" : 3
+}
