@@ -19,18 +19,18 @@ folders "1Password" and the AD provider (OU hierarchy), folder "Jump
 Boxes".
 
 It began as a macOS app (Swift/AppKit shell over a Rust core, repo
-https://github.com/mattdobbs/Toolbox, public since 2026-11-19 with its
+https://github.com/tacticalbadger/Toolbox, public since 2026-11-19 with its
 history rewritten). On 2026-11-17 the owner decided to port it to Windows.
-This repo (https://github.com/mattdobbs/Toolbox_Windows.git, private) is
+This repo (https://github.com/tacticalbadger/Toolbox_Windows.git, private) is
 the Windows app. **One branch: `main`.** Commit and push to `main`
 directly; no feature branches unless the owner asks. Commit only when the
 owner asks.
 
 **The Mac app is the behavioural reference, and the goal is feature
 parity** (owner, 2026-11-19). Two places to read it:
-- Commit `e2d77a4` in this repo is a snapshot from 2026-11-16:
-  `git show e2d77a4:App/Sources/Workspace/PaneView.swift`,
-  `git ls-tree -r --name-only e2d77a4 App/`.
+- Commit `3462de1` in this repo is a snapshot from 2026-11-16:
+  `git show 3462de1:App/Sources/Workspace/PaneView.swift`,
+  `git ls-tree -r --name-only 3462de1 App/`.
 - The Mac repo itself has moved on since (RDP sizing fix, release
   pipeline, identifier scrub). Clone it somewhere outside this repo to
   compare; do not add it as a remote here. Its README "What works" is the
@@ -150,6 +150,12 @@ Things that bite on this machine:
 - The harness runs Windows PowerShell 5.1 (`&&` is a parse error) and Git
   Bash. Keep scripts ASCII: 5.1 reads BOM-less files as ANSI. `2>&1` on a
   native command turns stderr lines into error records.
+- Git Bash here is an x64 program running under emulation, and so is a
+  `powershell.exe` started from it: `$env:PROCESSOR_ARCHITECTURE` says
+  AMD64 there while cargo still builds for ARM64. A build started that
+  way once put an ARM64 DLL in the x64 slot. `build.ps1` and `launch.ps1`
+  now read the machine-level value, and `core` checks the header of the
+  DLL it built; start the build scripts from PowerShell all the same.
 - **Never pipe the output of something that leaves a process running**
   unless that process was started through the shell: a child started with
   inherited handles keeps the pipe open and the caller hangs until it
@@ -238,8 +244,10 @@ clean-end path of RDP is untested.
   since its scrub, applied here from 2026-11-19): no real hostnames,
   domain names, usernames, account emails or employer. Use
   `corp.example`, `CORP\jdoe`, `ACME`, demo/secret in docs, tests and
-  fixtures, and write "the owner" in these notes. The two commits already
-  in this repo predate the rule (see Current state).
+  fixtures, and write "the owner" in these notes. The history was
+  rewritten on 2026-11-19 so that this holds for every commit (see
+  Current state). The same goes for what is handed out: `build.ps1`
+  keeps the build machine's paths out of the binaries (see the gotchas).
 - Keep `README.md` ("What works", "Not there yet") and
   `docs/SECURITY-REVIEW.md` current.
 - Secrets never go in `connections.json`; they live in the vault,
@@ -321,6 +329,17 @@ Found on Windows:
   `AWS_LC_SYS_PREBUILT_NASM=1` when there is none. An x64 build runs on
   this machine under emulation only when self-contained (no x64 .NET
   runtime is installed), which is what `package` produces.
+- **Build paths end up in the DLL.** Rust puts source paths in panic
+  messages and aws-lc's C code uses `__FILE__`; both start with the
+  profile folder (the account name), the C ones under its 8.3 spelling
+  because aws-lc-sys hands short paths to the compiler. `build.ps1 core`
+  rewrites them: `--remap-path-prefix` through `CARGO_ENCODED_RUSTFLAGS`,
+  and `AWS_LC_SYS_CFLAGS_<target>` (flags for that crate only) with
+  `/clang:-ffile-prefix-map=…` for clang-cl on ARM64 and `/d1trimfile:…`
+  for cl on x64. clang-cl ignores a bare `-ffile-prefix-map`. `core`
+  warns and `package` refuses when a binary still names the profile
+  folder. A bare `cargo build --release` does none of this, and changing
+  the flags rebuilds every crate.
 - The virtual host for the terminal page is under `.example`; other
   made-up names can cost a DNS lookup on every load.
 - `e2e\ui.ps1` must not tap Alt to get the foreground: it opens the menu
@@ -355,7 +374,7 @@ Missing, in suggested order:
    certificate every recipient gets the SmartScreen warning. The x64
    package has only run under emulation on the ARM64 dev machine.
 3. App icon (`.ico` from the Mac drawing in `bridge/make-icon.swift` at
-   `e2d77a4`).
+   `3462de1`).
 4. Sidebar multi-selection (the Mac deletes and drags several at once).
 5. A `Toolbox.Tests` project (`PaneTree`, `PaneLayout`, the drafts,
    `CredentialResolver.Split`); `build.ps1 test` already runs it if it
@@ -377,8 +396,19 @@ provider, binding the vault key to a Windows Hello credential.
 
 As of 2026-11-19, on `main`.
 
-This change set is the first Windows app and its first release,
-**Toolbox 0.1.0**:
+This change set (after 0.1.0, no app code changed): `build.ps1` keeps
+build paths out of the binaries, reads the machine's architecture
+instead of the shell's and checks the DLL it built; `launch.ps1` takes
+its app arguments when typed at a PowerShell prompt (the documented form
+only worked through `powershell -File`); these notes and the README
+follow the history rewrite and the GitHub account's new name; one
+security review addendum covers the identifiers. Checked: 38 Rust tests;
+both rebuilt DLLs searched for the profile folder (none); the ARM64
+build and a scratch self-contained x64 build (under emulation) run
+against the fixture with SSH, SFTP and FTP connecting. No package was
+rebuilt: `build\release` still holds the published 0.1.0 files.
+
+What 0.1.0, the first Windows app and its first release, consisted of:
 - Core, ported to Windows (2026-11-18): Unix-only code behind
   `cfg(unix)` with Windows counterparts (permissions, SFTP test server
   file I/O, SSH agent over the named pipe, home directory, `op.exe`
@@ -393,24 +423,61 @@ This change set is the first Windows app and its first release,
 - Docs: README rewritten, two security review addenda (the app; packaged
   builds), release notes for 0.1.0, these notes.
 
-Released: v0.1.0 goes on the Releases page as two self-contained,
-unsigned zips (win-arm64, win-x64) with SHA256SUMS, built from this
-commit. Both packages were run against the fixture and test servers
-before publishing: ARM64 natively, x64 under emulation (terminal, FTP
+Released: **v0.1.0 (build 4) is on the Releases page** since 2026-11-19
+as two self-contained, unsigned zips (win-arm64, win-x64) with
+SHA256SUMS, built from the commit the annotated tag points at (`beea2b6`
+since the rewrite below); GitHub's digests match the local checksums.
+Both packages were run against the fixture and test servers before
+publishing: ARM64 natively, x64 under emulation (terminal, FTP and SFTP
 browser, vault, the RDP control loading). No x64 hardware has run it.
+`publish.ps1` needed one fix during the run (commit `e80fdf7`, after the
+tag).
+
+**Both repos had their history rewritten on 2026-11-19**, after 0.1.0
+was out (owner: the real hostname must not be in the repos):
+- Mac repo (public): the internal hostname in the test data of
+  `onepassword.rs` became `nutanix1.corp.example` in every commit.
+  `main` (now `a244c52`) and `v0.2.0` (now `1c9af1d`) were force-pushed;
+  the 0.2.0 release kept its files. **A clone from before that, the Mac
+  itself included, must run `git fetch origin` and `git reset --hard
+  origin/main` before any other work, and must never push its old
+  history**, or the hostname is public again. The Mac repo's own notes do
+  not say this yet.
+- This repo: the two oldest commits lost the hostname, the AD domain
+  names, a domain account, a private address, the profile folder name
+  and the owner's first name (the usual placeholders instead), and the
+  first three commits got the no-reply address. All five commit ids
+  changed (the Mac snapshot is now `3462de1`, the release commit
+  `beea2b6`); `v0.1.0` moved with its commit, and the release kept its
+  files and its build number, since the commit count is the same.
+  Any other clone of this repo needs the same fetch and reset.
+- GitHub keeps commits that nothing points at for some time: whoever
+  has an old commit id can still open it there until GitHub collects
+  it. GitHub Support removes them on request.
+
+Since the same day `build.ps1` keeps the build machine's paths out of
+the binaries (see the gotchas). **The 0.1.0 downloads predate that**:
+their `toolbox_core.dll` names the build account's profile folder a few
+hundred times (no hostname, no secret). The repo is private and the
+owner chose to leave 0.1.0 as it is; the next release is clean, and
+`package` now refuses a build that is not.
+
+The GitHub account was renamed: both repos are under `tacticalbadger`
+(found on 2026-11-19 when a push answered "this repository moved"). The
+old addresses redirect; this clone's `origin` and the links in these
+notes and the README use the new one. `publish.ps1` takes the owner from
+`origin`, so a clone that still has the old address must be updated
+before publishing (`git remote set-url origin …`).
 
 For the owner to decide or try:
 - The password fallback of the owner check (see Decisions). Try one vault
   unlock with the real account password; turn it off in the Vault menu if
   it is not wanted.
 - A code-signing certificate, so coworkers stop seeing SmartScreen.
-- The Mac repo, now public, still has a real internal hostname in the
-  test data of `core/toolbox-core/src/onepassword.rs` (two lines, the
-  item URL); it is replaced here.
-- This repo's three earlier commits carry the old wording (real domain
-  in CLAUDE.md, names) and a personal email address in their metadata
-  (this clone has used the no-reply address since). Harmless while the
-  repo is private; it needs the same history rewrite as the Mac repo
-  before it is ever made public.
+- Reset the Mac's clone to the rewritten history before working there
+  (see above), and consider asking GitHub Support to remove the Mac
+  repo's old, now unreachable commits.
+- The Mac repo's notes and README still link to the GitHub account's old
+  name; the links redirect, but only while nobody else takes that name.
 
 Next: VNC, then signing and an installer (see the list above).

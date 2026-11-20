@@ -7,15 +7,15 @@ Directory sync (the part Royal TS gets right). Rust for the connection
 engine, C# and WPF for the app.
 
 This is the Windows port of the macOS Toolbox app
-(https://github.com/mattdobbs/Toolbox). **The port is in progress**: see
+(https://github.com/tacticalbadger/Toolbox). **The port is in progress**: see
 "What works" and "Not there yet" below. The Mac app is preserved in this
-repository's history (commit `e2d77a4`) as the reference for the port.
+repository's history (commit `3462de1`) as the reference for the port.
 `CLAUDE.md` holds the decisions, machine setup and current state.
 
 ## Download
 
 The latest build is on the
-[Releases page](https://github.com/mattdobbs/Toolbox_Windows/releases/latest):
+[Releases page](https://github.com/tacticalbadger/Toolbox_Windows/releases/latest):
 take the zip for your PC (`win-x64` for most, `win-arm64` for Windows on
 ARM), unblock it (right-click ▸ Properties ▸ Unblock), extract it anywhere
 and run `Toolbox.exe`. Nothing needs installing. The builds are not
@@ -97,6 +97,11 @@ writes the release notes: the standard install text plus the bullets in
 re-uploads an existing release's files, `-DryRun` shows what would be
 sent. No GitHub CLI is needed; the script uses the credential Git already
 has for the repository.
+
+Build the core with `tools\build.ps1 core`, not a bare `cargo build`:
+the script rewrites the source paths compilers leave in the DLL, which
+would otherwise carry your account name to everyone who downloads the
+package. `package` refuses a build that still has them.
 
 Still to do here: an installer and a code-signing certificate. Until
 then every recipient sees the SmartScreen warning once.

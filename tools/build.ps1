@@ -56,7 +56,12 @@ foreach ($t in $Targets) {
     if ($known -notcontains $t) { throw "unknown target '$t' (expected: $($known -join ', '))" }
 }
 
-$hostArch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+# The machine's architecture, not this process's: an x64 PowerShell running
+# under emulation on ARM64 (Git Bash starts one) reports AMD64 for itself,
+# while cargo still builds for ARM64 when no target is named.
+$machine = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE', 'Machine')
+if (-not $machine) { $machine = $env:PROCESSOR_ARCHITECTURE }
+$hostArch = if ($machine -eq 'ARM64') { 'arm64' } else { 'x64' }
 if (-not $Arch) { $Arch = $hostArch }
 $Rid = "win-$Arch"
 $Triple = if ($Arch -eq 'arm64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
@@ -92,10 +97,94 @@ function Get-RunningBuild {
     }
 }
 
+# The 8.3 spelling of a folder, which is how aws-lc-sys names its sources to
+# the C compiler. Where short names are switched off the path comes back
+# unchanged.
+function Get-ShortPath([string]$path) {
+    try { return (New-Object -ComObject Scripting.FileSystemObject).GetFolder($path).ShortPath }
+    catch { return $path }
+}
+
+# Compilers bake source paths into the DLL: panic locations in Rust, __FILE__
+# in the crypto library's C code. They all start with the profile folder,
+# which is the account name, and the DLL is handed to other people. So the
+# prefixes are rewritten: cargo's folder becomes "cargo", this checkout
+# "toolbox". Returns the environment variables that make cargo do it.
+function Get-PathScrubEnvironment {
+    $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+    $cargoHome = $cargoHome.TrimEnd('\')
+    $separator = [string][char]0x1f
+
+    $rustFlags = @()
+    if ($env:CARGO_ENCODED_RUSTFLAGS) { $rustFlags += @($env:CARGO_ENCODED_RUSTFLAGS -split $separator) }
+    elseif ($env:RUSTFLAGS) { $rustFlags += @($env:RUSTFLAGS -split '\s+' | Where-Object { $_ }) }
+    $rustFlags += "--remap-path-prefix=$cargoHome=cargo"
+    $rustFlags += "--remap-path-prefix=$Root=toolbox"
+
+    # aws-lc-sys compiles with clang-cl for ARM64 and with cl for x64, and
+    # takes flags of its own, so no other crate's C build sees these. A C
+    # flag cannot carry a space; the short spelling never has one.
+    $spellings = @(@($cargoHome, (Get-ShortPath $cargoHome)) | Select-Object -Unique | Where-Object { $_ -notmatch '\s' })
+    $cFlags = @()
+    foreach ($spelling in $spellings) {
+        if ($Arch -eq 'arm64') { $cFlags += "/clang:-ffile-prefix-map=$spelling=cargo" }
+        else { $cFlags += "/d1trimfile:$spelling\" }
+    }
+    $cName = 'AWS_LC_SYS_CFLAGS_' + $Triple.Replace('-', '_')
+    $existing = [Environment]::GetEnvironmentVariable($cName, 'Process')
+    if ($existing) { $cFlags = @($existing) + $cFlags }
+
+    return @{
+        CARGO_ENCODED_RUSTFLAGS = ($rustFlags -join $separator)
+        $cName                  = ($cFlags -join ' ')
+    }
+}
+
+# Which processor a DLL or EXE is for, from its header.
+function Get-PeArchitecture([string]$path) {
+    $bytes = [System.IO.File]::ReadAllBytes($path)
+    $machine = [BitConverter]::ToUInt16($bytes, [BitConverter]::ToInt32($bytes, 0x3c) + 4)
+    if ($machine -eq 0xAA64) { return 'arm64' }
+    if ($machine -eq 0x8664) { return 'x64' }
+    return ('0x{0:X4}' -f $machine)
+}
+
+# The files among these that still name this machine's profile folder, in
+# either spelling, as text or as UTF-16.
+function Find-PrivatePaths([string[]]$files) {
+    $leaves = @((Split-Path -Leaf $env:USERPROFILE), (Split-Path -Leaf (Get-ShortPath $env:USERPROFILE))) | Select-Object -Unique
+    $needles = @()
+    foreach ($leaf in $leaves) {
+        foreach ($slash in '\', '/') {
+            $needle = "Users$slash$leaf"
+            $needles += $needle
+            $needles += ($needle.ToCharArray() -join [string][char]0) + [string][char]0
+        }
+    }
+    $latin1 = [System.Text.Encoding]::GetEncoding(28591)
+    $found = @()
+    foreach ($file in $files) {
+        $text = $latin1.GetString([System.IO.File]::ReadAllBytes($file))
+        foreach ($needle in $needles) {
+            if ($text.IndexOf($needle, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                $found += (Split-Path -Leaf $file)
+                break
+            }
+        }
+    }
+    return $found
+}
+
 function Build-Core {
     Assert-Tool 'cargo' 'Install Rust: winget install Rustlang.Rustup'
     Assert-Tool 'uniffi-bindgen-cs' 'cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag v0.12.0+v0.32.0'
     Step "core: cargo build --release ($Triple)"
+    $scrub = Get-PathScrubEnvironment
+    $before = @{}
+    foreach ($name in $scrub.Keys) {
+        $before[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, $scrub[$name], 'Process')
+    }
     Push-Location $Core
     try {
         if ($Arch -eq $hostArch) {
@@ -113,7 +202,16 @@ function Build-Core {
             $dll = Join-Path $Core "target\$Triple\release\toolbox_core.dll"
         }
     }
-    finally { Pop-Location }
+    finally {
+        Pop-Location
+        foreach ($name in $scrub.Keys) { [Environment]::SetEnvironmentVariable($name, $before[$name], 'Process') }
+    }
+    # A DLL for the wrong processor would only fail when the app loads it.
+    $built = Get-PeArchitecture $dll
+    if ($built -ne $Arch) { throw "cargo built a DLL for $built where $Arch was asked for ($dll)" }
+    if (@(Find-PrivatePaths @($dll)).Count -gt 0) {
+        Write-Warning 'toolbox_core.dll still names this machine''s profile folder; "package" will refuse it. See Get-PathScrubEnvironment.'
+    }
 
     $native = Join-Path $App "runtimes\$Rid\native"
     New-Item -ItemType Directory -Force $native | Out-Null
@@ -257,6 +355,11 @@ function New-Package {
     }
     foreach ($needed in 'Toolbox.exe', 'toolbox_core.dll', 'WebView2Loader.dll', 'Assets\Terminal\terminal.html', 'Assets\Terminal\xterm\xterm.js') {
         if (-not (Test-Path (Join-Path $stage $needed))) { throw "the package is missing $needed" }
+    }
+    # What is built here must not tell the recipient where it was built.
+    $telling = @(Find-PrivatePaths @('Toolbox.exe', 'Toolbox.dll', 'toolbox_core.dll' | ForEach-Object { Join-Path $stage $_ }))
+    if ($telling.Count -gt 0) {
+        throw "$($telling -join ', ') contains a path under this machine's profile folder. Run: tools\build.ps1 core -Arch $Arch (it rewrites those paths), then package again."
     }
 
     Step "package: $name.zip"

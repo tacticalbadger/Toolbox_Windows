@@ -345,3 +345,50 @@ The WPF shell now exists. What it adds or changes that touches security:
   connections, credentials, keys or settings: each person's data is
   created on their own PC. The end-to-end fixture and its throwaway keys
   live under `build\e2e` and are not packaged.
+
+## Addendum — 2026-11-19, later: identifiers in history and in released binaries
+
+Scope: what the two repositories and the published packages reveal about
+the environment they come from. No code path of the app changed.
+
+- **A real internal hostname was public.** The test data of the
+  1Password parser in the Mac repository named an internal system by its
+  full DNS name, in every commit but the first and under the `v0.2.0`
+  tag. It is not a credential, but it tells an outsider one host name and
+  the internal DNS suffix. Both were replaced with `corp.example` names
+  by rewriting the history, and `main` and the tag were force-pushed; a
+  fresh clone was searched commit by commit afterwards and has no
+  occurrence left. Residual: the name was public for some hours and must
+  be treated as known; GitHub keeps commits that nothing points at for
+  some time, reachable by their old ids, until its own cleanup or a
+  request to GitHub Support; and a clone made earlier still holds the old
+  history and would publish it again if it were force-pushed.
+- **The same and more in this repository's oldest commits.** The
+  imported Mac tree and the notes of that time carried that hostname, the
+  names of the Active Directory domains used for testing, a domain
+  account name, a private address, the profile folder of the build
+  account and the owner's first name; the first three commits carried a
+  personal email address in their metadata. This repository is private,
+  so the audience was the people given access. The history was rewritten
+  with the usual placeholders and the no-reply address and force-pushed
+  with the `v0.1.0` tag; the release kept its files. The same residual
+  applies, limited to those people.
+- **Build paths in the released DLL.** `toolbox_core.dll` in the 0.1.0
+  packages names the build account's profile folder (account name plus
+  the domain's short name) a few hundred times: Rust stores source paths
+  for panic messages, and the crypto library's C code stores `__FILE__`
+  for its error queue. No hostname, key or other secret is among them
+  (the machine name was searched for and is absent), and `Toolbox.exe`
+  and `Toolbox.dll` are free of them. It hands every recipient a valid
+  account name, which is of some use for phishing or password guessing
+  and of none to coworkers who know it already. From now on
+  `tools\build.ps1 core` rewrites those prefixes (`--remap-path-prefix`
+  for Rust; compiler flags scoped to the crypto crate for C), and
+  `package` refuses to produce a zip while `Toolbox.exe`, `Toolbox.dll`
+  or `toolbox_core.dll` still contains the profile folder in either of
+  its spellings, as text or UTF-16. Residual: the 0.1.0 downloads stay as
+  they are until the next release replaces them (owner's decision); the
+  check covers the three files built here, not the .NET runtime or the
+  WebView2 loader, which are built elsewhere; and it looks for the
+  profile folder only, so a new kind of embedded detail would need a new
+  check.

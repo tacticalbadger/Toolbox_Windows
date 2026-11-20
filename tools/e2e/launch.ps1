@@ -23,7 +23,9 @@ param(
     [string]$Fixture,
     [int]$Wait = 3,
     [string]$Exe,
-    [Parameter(ValueFromRemainingArguments = $true)]
+    # The only positional parameter: without that, "--connect echo" typed at a
+    # PowerShell prompt lands in -Fixture and -Wait.
+    [Parameter(Position = 0, ValueFromRemainingArguments = $true)]
     [string[]]$AppArgs
 )
 
@@ -40,7 +42,10 @@ if ($Exe) {
     $Exe = (Resolve-Path $Exe).Path
 }
 else {
-    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+    # The machine's architecture, as in build.ps1 (an emulated shell reports its own).
+    $machine = [Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE', 'Machine')
+    if (-not $machine) { $machine = $env:PROCESSOR_ARCHITECTURE }
+    $arch = if ($machine -eq 'ARM64') { 'arm64' } else { 'x64' }
     $Exe = Join-Path $Root "build\app\win-$arch\Toolbox.exe"
     if (-not (Test-Path $Exe)) { throw "no build at $Exe; run tools\build.ps1 first" }
 }
