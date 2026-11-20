@@ -83,7 +83,7 @@ Swift tree → C# tree: `App/` (delegate, menu) → `App.xaml.cs`,
   belongs to the terminal; RDP certificate problems show the standard
   Windows warning; nothing but the clipboard is redirected; the window
   has no Mica backdrop (see the gotchas); Windows versions are numbered
-  on their own (0.2.0 carries the Mac's 0.3.0 changes).
+  on their own (0.2.1 carries the Mac's 0.3.0 changes).
 - Paths: app data in
   `%APPDATA%\Toolbox\{connections.json,vault.json,vault.key,settings.json}`;
   log and WebView2 profile in `%LOCALAPPDATA%\Toolbox`; `known_hosts`
@@ -217,6 +217,12 @@ tools\build.ps1 core package -Arch x64         # win-x64 zip (cross-compiled; ru
 tools\e2e\launch.ps1 -Exe build\release\Toolbox-<version>-win-x64\Toolbox.exe --connect echo   # test what ships
 tools\publish.ps1 -DryRun                      # then without -DryRun
 ```
+
+Releases on this repository are immutable (a GitHub setting): once one is
+published its files and tag are fixed, and the tag name can never be used
+for another release, deleted or not. `publish.ps1` therefore attaches the
+files to a draft and publishes last. There is no second try for a version
+number: read the dry run, and test the packages first.
 
 ## End-to-end checks (no real hosts needed)
 
@@ -467,7 +473,7 @@ Found on Windows:
 ## Not verified against real infrastructure
 
 A real Windows RDP host, for everything: sign-out detection, CredSSP
-against a domain, and what is new in 0.2.0 (clipboard text and files both
+against a domain, and what is new in 0.2.1 (clipboard text and files both
 ways under the manual mode, the resize at the end of a drag, shrinking
 while dragging, Fast Graphics off). All RDP checks ran against the
 IronRDP test server. Also: a real SSH host with the Windows agent or
@@ -491,7 +497,7 @@ editors, folder credentials, stored passwords, vault on DPAPI with the
 owner check, 1Password provider sync through a fake `op`, provider-owned
 accounts, launch arguments, build script, harness.
 
-From the Mac's 0.3.0, in Windows 0.2.0:
+From the Mac's 0.3.0, in Windows 0.2.1:
 - RDP clipboard, only for the pane in use (the control's manual mode).
   Wider than the Mac in one way: files from the host are accepted too.
 - Modern graphics: nothing to do, the control always took the pipeline.
@@ -536,8 +542,10 @@ it and needs a real host to try).
 
 ## Current state (update in every commit)
 
-As of 2026-11-20, on `main`. **Version 0.2.0**: the Mac's 0.3.0 brought
-over, a security pass, and a release.
+As of 2026-11-20, on `main`. **Version 0.2.1**: the Mac's 0.3.0 brought
+over, a security pass, and a release. (0.2.0 is the same app; its release
+went out without files and the number could not be used again, see
+"Released" below.)
 
 This change set, asked for by the owner in one go ("the Mac version was
 updated; give this app parity, vet the code for security issues, update
@@ -593,7 +601,7 @@ second remote desktop and confirm that only the one in front sees a new
 copy. If a picture is garbled, View ▸ Remote Desktop ▸ Fast Graphics off
 and reconnect.
 
-Released: see the end of this section for 0.2.0. **v0.1.0 (build 4)**
+Released: see the end of this section for 0.2.1. **v0.1.0 (build 4)**
 stays on the Releases page as it was (two unsigned zips whose
 `toolbox_core.dll` names the build account's profile folder; the owner
 chose to leave it).
@@ -627,9 +635,24 @@ For the owner to decide or try:
 
 Next: VNC, then signing and an installer (see the list above).
 
-Released: **v0.2.0** is published from this commit as two self-contained,
-unsigned zips (win-arm64, win-x64) with SHA256SUMS, each run against the
-fixture before publishing (x64 under emulation). If this paragraph is
-still here but the Releases page has no v0.2.0, the release step did not
-finish: `tools\build.ps1 core assets package`, `tools\build.ps1 core
-package -Arch x64`, `tools\publish.ps1`.
+Released: **v0.2.1 (build 8)** is published from this commit as two
+self-contained, unsigned zips (win-arm64, win-x64) with SHA256SUMS, each
+run against the fixture before publishing (x64 under emulation). If this
+paragraph is still here but the Releases page has no v0.2.1 with three
+files, the release step did not finish: `tools\build.ps1 package`,
+`tools\build.ps1 package -Arch x64`, `tools\publish.ps1` (it carries on
+with a draft it finds).
+
+**What happened to 0.2.0.** The repository has had "immutable releases"
+switched on since 0.1.0 (not by these sessions; v0.1.0 itself is not
+immutable). `publish.ps1` published the release and then tried to attach
+the files, which GitHub now refuses, so **v0.2.0 exists as a release with
+notes and no downloads**, at commit `8ec9dc0`. Such a release cannot take
+files later, and if it is deleted its tag name still cannot be used
+again; it was left in place with a note pointing at 0.2.1. The script
+now creates a draft, attaches the files and publishes last, and refuses
+`-Replace` on an immutable release. Consequences to remember: a release
+cannot be re-uploaded any more (the release notes can still be edited),
+so check the packages before publishing, and every mistake costs a
+version number. The same run showed that the script read the release
+notes as ANSI; it reads UTF-8 now.

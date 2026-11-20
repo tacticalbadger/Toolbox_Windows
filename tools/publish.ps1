@@ -18,8 +18,16 @@
     details out of release notes.
 
     -Replace     re-upload the files and notes of a release that already exists
+                 (not possible where releases are immutable)
     -Prerelease  mark the release as a pre-release
     -DryRun      run every check and show what would be published; send nothing
+
+    The release is created as a draft, the files are attached, and only then
+    is it published. With "immutable releases" switched on for a repository,
+    GitHub accepts no file once a release is out, and a tag that has had
+    such a release can never be used for another one: a release published
+    without its files costs the version number. A draft left behind by a
+    run that did not finish is found and carried on with.
 
     No GitHub CLI is needed: the release is created through the GitHub API
     with the credential Git already uses for this repository (Git Credential
@@ -117,7 +125,9 @@ This build is **not code-signed yet**. If Windows shows "Windows protected your 
 "@
 $versionNotes = Join-Path $Root "docs\release-notes\$Version.md"
 if (Test-Path $versionNotes) {
-    $notes += "`n`n## In this version`n`n" + (Get-Content $versionNotes -Raw).Trim()
+    # Read as UTF-8 by name: Windows PowerShell takes a file without a
+    # byte-order mark for ANSI, which garbles anything beyond ASCII.
+    $notes += "`n`n## In this version`n`n" + [System.IO.File]::ReadAllText($versionNotes, [System.Text.Encoding]::UTF8).Trim()
 }
 $notes += "`n`n``SHA256SUMS`` lists checksums for the downloads."
 $title = "Toolbox $Version"
@@ -198,26 +208,49 @@ $existing = $null
 try { $existing = Invoke-GitHub 'Get' "$api/releases/tags/$Tag" }
 catch { if ((Get-StatusCode $_) -ne 404) { throw "GitHub refused the request ($(Get-StatusCode $_)): $($_.Exception.Message)" } }
 
+function Send-Files($release) {
+    foreach ($package in $packages) { Send-Asset $release $package 'application/zip' }
+    Send-Asset $release (Get-Item $SumsPath) 'text/plain'
+}
+
 if ($null -ne $existing) {
     if (-not $Replace) {
         throw "release $Tag already exists. Change VERSION and package again for a new one, or run with -Replace to re-upload this one."
     }
+    if ($existing.PSObject.Properties['immutable'] -and $existing.immutable) {
+        throw "release $Tag is immutable: GitHub accepts no changes to its files, and its tag cannot be used for another release. Change VERSION and package again."
+    }
     Step "Replacing the files of $Tag"
     $release = Invoke-GitHub 'Patch' "$api/releases/$($existing.id)" @{ name = $title; body = $notes; prerelease = [bool]$Prerelease }
     $release = Invoke-GitHub 'Get' "$api/releases/$($existing.id)"
+    Send-Files $release
 }
 else {
-    Step "Creating release $Tag"
-    # An annotated tag made here and pushed, so the local clone has it too.
-    & git -C $Root rev-parse -q --verify "refs/tags/$Tag" 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { Invoke-Git tag -a $Tag -m $title $head | Out-Null }
-    Invoke-Git push -q origin "refs/tags/$Tag" | Out-Null
-    $release = Invoke-GitHub 'Post' "$api/releases" @{
-        tag_name = $Tag; name = $title; body = $notes; draft = $false; prerelease = [bool]$Prerelease
+    # A draft is not found by its tag, only in the list.
+    $draft = @(Invoke-GitHub 'Get' "$api/releases?per_page=100") | Where-Object { $_.draft -and $_.tag_name -eq $Tag } | Select-Object -First 1
+    if ($null -ne $draft) {
+        Step "Carrying on with the draft of $Tag"
+        $release = Invoke-GitHub 'Patch' "$api/releases/$($draft.id)" @{ name = $title; body = $notes; prerelease = [bool]$Prerelease }
+        $release = Invoke-GitHub 'Get' "$api/releases/$($draft.id)"
     }
+    else {
+        Step "Creating release $Tag (as a draft until its files are attached)"
+        # An annotated tag made here and pushed, so the local clone has it too.
+        & git -C $Root rev-parse -q --verify "refs/tags/$Tag" 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { Invoke-Git tag -a $Tag -m $title $head | Out-Null }
+        Invoke-Git push -q origin "refs/tags/$Tag" | Out-Null
+        $release = Invoke-GitHub 'Post' "$api/releases" @{
+            tag_name = $Tag; name = $title; body = $notes; draft = $true; prerelease = [bool]$Prerelease
+        }
+    }
+    Send-Files $release
+    # Published last: nothing can be added to an immutable release.
+    Step "Publishing $Tag"
+    $release = Invoke-GitHub 'Patch' "$api/releases/$($release.id)" @{ draft = $false }
 }
 
-foreach ($package in $packages) { Send-Asset $release $package 'application/zip' }
-Send-Asset $release (Get-Item $SumsPath) 'text/plain'
-
-Write-Host "published: $($release.html_url)"
+$published = Invoke-GitHub 'Get' "$api/releases/tags/$Tag"
+$names = @($published.assets | ForEach-Object { $_.name })
+$missing = @(@($packages | ForEach-Object { $_.Name }) + 'SHA256SUMS' | Where-Object { $names -notcontains $_ })
+if ($missing.Count -gt 0) { throw "release $Tag is out, but GitHub does not list: $($missing -join ', ')" }
+Write-Host "published: $($published.html_url) ($($names.Count) files)"

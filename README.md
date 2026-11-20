@@ -98,6 +98,13 @@ re-uploads an existing release's files, `-DryRun` shows what would be
 sent. No GitHub CLI is needed; the script uses the credential Git already
 has for the repository.
 
+Releases on this repository are immutable: once one is published, GitHub
+accepts no change to its files, and its version number cannot be used for
+another release. `publish.ps1` attaches the files to a draft and
+publishes last, so test the packages and read the dry run first. (0.2.0
+was published without files before the script did it in that order, and
+stays empty; 0.2.1 is the same app.)
+
 Build the core with `tools\build.ps1 core`, not a bare `cargo build`:
 the script rewrites the source paths compilers leave in the DLL, which
 would otherwise carry your account name to everyone who downloads the
@@ -243,5 +250,5 @@ overrides: `TOOLBOX_STORE_PATH`, `TOOLBOX_VAULT_PATH`,
 
 `docs/SECURITY-REVIEW.md` records the review findings and residual risks,
 with an addendum per security-relevant change (most recently the review
-for 0.2.0: clipboard sharing with remote desktops, and what was hardened
+for 0.2.1: clipboard sharing with remote desktops, and what was hardened
 after reading the whole Windows app again).

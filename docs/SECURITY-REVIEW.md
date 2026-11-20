@@ -393,9 +393,9 @@ the environment they come from. No code path of the app changed.
   profile folder only, so a new kind of embedded detail would need a new
   check.
 
-## Addendum — 2026-11-20: Toolbox 0.2.0 (clipboard with remote desktops; a second read of the Windows app)
+## Addendum — 2026-11-20: Toolbox 0.2.1 (clipboard with remote desktops; a second read of the Windows app)
 
-Reviewed: everything that changed for 0.2.0, and the whole Windows app and
+Reviewed: everything that changed since 0.1.0, and the whole Windows app and
 the Windows-only parts of the core read again. The adversary in mind is a
 hostile or compromised host at the other end of a session. Method: a
 read-through, experiments against Microsoft's RDP control with a local
@@ -517,17 +517,26 @@ Toolbox's own decodes it.
   control, which would take every open session with it.
 - `op` is started without a console window now. Nothing else about how
   it is found or run changed; the earlier note on `PATH` stands.
-- The package still carries its own .NET runtime (10.0.15 in 0.2.0); the
+- The package still carries its own .NET runtime (10.0.15 in 0.2.1); the
   earlier note on servicing stands.
 
 **Releases.** The check that keeps build paths out of a package stopped
-the first 0.2.0 package: `Toolbox.dll` named the profile folder of the
+the first package of this version: `Toolbox.dll` named the profile folder of the
 build account. `dotnet publish` had reused the assembly the ordinary
 build compiled a moment earlier at the same commit, and that one records
 the full path of its debug file. Every C# build now maps the checkout's
 folder to a neutral name, and the package step compiles afresh. 0.1.0's
 `Toolbox.dll` was clean (searched again); its `toolbox_core.dll` is as
 the previous addendum says.
+
+The repository's releases are immutable (a GitHub setting): a published
+release's files and tag cannot be changed, which is what a recipient
+checking a download wants. It also means files must be attached before
+publishing. The publish script did it the other way round, so 0.2.0 was
+published with notes and no files; it stays that way, pointing at 0.2.1,
+which is the same code. The script now attaches the files to a draft and
+publishes last. Nothing was exposed by this; the cost was a version
+number.
 
 **Not verified.** No real Windows host was available: the clipboard rule
 is tested against the IronRDP test server, text only (file copy rests on
