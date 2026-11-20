@@ -135,19 +135,26 @@ if ($DryRun) {
 
 # The token Git already holds for this repository, asked for the way Git asks.
 function Get-GitHubToken {
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = 'git'
-    $psi.Arguments = 'credential fill'
-    $psi.WorkingDirectory = $Root
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.CreateNoWindow = $true
-    $process = [System.Diagnostics.Process]::Start($psi)
-    $process.StandardInput.Write("protocol=https`nhost=github.com`npath=$Owner/$Repo.git`n`n")
-    $process.StandardInput.Close()
-    $text = $process.StandardOutput.ReadToEnd()
-    $process.WaitForExit()
+    # The question goes through a file and cmd's "<": a redirected input
+    # stream from Windows PowerShell starts with a byte-order mark, and Git
+    # then does not recognise the first line. The file holds no secret.
+    $question = [System.IO.Path]::GetTempFileName()
+    try {
+        [System.IO.File]::WriteAllText($question, "protocol=https`nhost=github.com`npath=$Owner/$Repo.git`n`n", [System.Text.Encoding]::ASCII)
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $env:ComSpec
+        $psi.Arguments = "/d /c `"git credential fill < `"$question`"`""
+        $psi.WorkingDirectory = $Root
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.CreateNoWindow = $true
+        $process = [System.Diagnostics.Process]::Start($psi)
+        $text = $process.StandardOutput.ReadToEnd()
+        $process.WaitForExit()
+    }
+    finally {
+        Remove-Item -LiteralPath $question -Force -ErrorAction SilentlyContinue
+    }
     foreach ($line in ($text -split "`n")) {
         if ($line.StartsWith('password=')) { return $line.Substring(9).Trim() }
     }
