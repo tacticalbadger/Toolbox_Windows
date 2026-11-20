@@ -348,15 +348,14 @@ internal sealed class FileBrowserModel : Observable
         var folder = dialog.FolderName;
         foreach (var file in files)
         {
-            // Only ever write a plain file name inside the chosen folder.
-            var safeName = System.IO.Path.GetFileName(file.Name);
-            if (string.IsNullOrEmpty(safeName) || safeName is "." or ".." ||
-                safeName.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0)
+            // Only ever write a plain file name inside the chosen folder. The
+            // name comes from the server and is not trusted.
+            if (!LocalNames.IsSafe(file.Name))
             {
                 Status = $"“{file.Name}” can't be saved under that name on Windows.";
                 continue;
             }
-            var local = System.IO.Path.Combine(folder, safeName);
+            var local = System.IO.Path.Combine(folder, file.Name);
             if (File.Exists(local) &&
                 !Prompts.Confirm($"Replace {file.Name}?",
                                  $"A file with that name already exists in {System.IO.Path.GetFileName(folder)}.", "Replace"))
@@ -525,6 +524,35 @@ internal sealed class FileBrowserModel : Observable
             lock (gate) target = owner;
             target?.UpdateProgress(transferId, done, total);
         });
+    }
+}
+
+/// <summary>
+/// Whether a file name a server reported can be used, exactly as it is, for
+/// a file in a folder on this PC. Anything Windows would read as more than a
+/// plain name is refused instead of being quietly changed into something
+/// else: path separators and drive or stream colons, the names Windows
+/// reserves for devices (a download called COM1 would be written to the
+/// serial port), and names ending in a dot or a space, which Windows trims
+/// and so could land on another existing file.
+/// </summary>
+internal static class LocalNames
+{
+    private static readonly HashSet<string> Devices = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+        "COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³",
+        "LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
+    };
+
+    public static bool IsSafe(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name is "." or ".." || name.Length > 255) return false;
+        if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return false;
+        if (name[^1] is '.' or ' ') return false;
+        // "NUL", "nul.txt" and "COM1.tar.gz" all name the device.
+        var stem = name.Split('.')[0].TrimEnd(' ');
+        return !Devices.Contains(stem);
     }
 }
 

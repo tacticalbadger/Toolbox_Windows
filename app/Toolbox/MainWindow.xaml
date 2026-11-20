@@ -27,6 +27,15 @@
             <MenuItem Header="_View" SubmenuOpened="OnMenuOpened">
                 <MenuItem Header="Toggle _Sidebar" InputGestureText="Ctrl+Shift+B" Click="OnToggleSidebar" />
                 <MenuItem x:Name="ThemeMenu" Header="_Theme" />
+                <!-- Switches for every RDP connection; they apply when a session connects. -->
+                <MenuItem Header="Remote _Desktop" AutomationProperties.AutomationId="RemoteDesktopMenu">
+                    <MenuItem x:Name="RdpGraphicsItem" Header="_Fast Graphics" IsCheckable="True" Click="OnToggleRdpGraphics"
+                              AutomationProperties.AutomationId="RdpFastGraphics"
+                              ToolTip="Decode and draw remote desktops with the graphics card. Switch off if the picture comes out garbled or black. Applies when connecting." />
+                    <MenuItem x:Name="RdpClipboardItem" Header="Share _Clipboard" IsCheckable="True" Click="OnToggleRdpClipboard"
+                              AutomationProperties.AutomationId="RdpShareClipboard"
+                              ToolTip="Copy and paste text and files between this PC and remote desktops. Only the remote desktop you are working in is told what the clipboard holds. Applies when connecting." />
+                </MenuItem>
                 <Separator />
                 <MenuItem Header="Make Text _Bigger" InputGestureText="Ctrl+=" Click="OnTextBigger" />
                 <MenuItem Header="Make Text S_maller" InputGestureText="Ctrl+-" Click="OnTextSmaller" />
@@ -53,7 +62,7 @@
             </MenuItem>
             <MenuItem Header="V_ault" SubmenuOpened="OnMenuOpened">
                 <MenuItem x:Name="LockVaultItem" Header="_Lock Vault" Click="OnLockVault" />
-                <MenuItem x:Name="RequireAuthItem" Header="_Confirm It's You Before Unlocking"
+                <MenuItem x:Name="RequireAuthItem" Header="_Confirm It's You Before Unlocking" IsCheckable="True"
                           Click="OnToggleVaultAuth" />
             </MenuItem>
             <MenuItem Header="_Help">
@@ -72,7 +81,7 @@
 
             <GridSplitter x:Name="SidebarSplitter" Grid.Column="1" Width="5" Background="Transparent"
                           HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeBehavior="PreviousAndNext"
-                          Focusable="False" DragCompleted="OnSidebarResized" />
+                          Focusable="False" DragStarted="OnSidebarResizing" DragCompleted="OnSidebarResized" />
 
             <DockPanel Grid.Column="2">
                 <!-- Workspace tabs, with the pane actions at the far end. -->

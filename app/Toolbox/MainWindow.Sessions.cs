@@ -264,6 +264,9 @@ internal partial class MainWindow
         // Close the focused pane shortly after launch, the way its close button would.
         if (App.HasFlag("--demo-close")) After(3, () => Panes.ClosePane(Panes.FocusedPane.Id));
 
+        // Split the focused pane shortly after launch, which resizes what is in it.
+        if (App.HasFlag("--demo-split")) After(3, () => Panes.Split(SplitAxis.Horizontal));
+
         // Open an editor straight away.
         if (App.Value("--edit-connection") is { } editConnection)
         {

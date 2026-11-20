@@ -392,3 +392,146 @@ the environment they come from. No code path of the app changed.
   WebView2 loader, which are built elsewhere; and it looks for the
   profile folder only, so a new kind of embedded detail would need a new
   check.
+
+## Addendum — 2026-11-20: Toolbox 0.2.0 (clipboard with remote desktops; a second read of the Windows app)
+
+Reviewed: everything that changed for 0.2.0, and the whole Windows app and
+the Windows-only parts of the core read again. The adversary in mind is a
+hostile or compromised host at the other end of a session. Method: a
+read-through, experiments against Microsoft's RDP control with a local
+test server, 38 Rust tests and 44 app tests, `cargo clippy`, `cargo audit`
+(its first run on this machine) and `dotnet list package --vulnerable`.
+
+Result: nothing was found that lets a host reach beyond what a feature
+hands it. One existing behaviour turned out wider than the earlier
+addendum said (the clipboard, below) and was narrowed; five smaller
+things were changed because of the review (marked "review").
+
+**The clipboard, as it was.** 0.1.0 switched clipboard redirection on and
+left the rest to the control, as mstsc does. Measured against the test
+server: in that mode the control tells a connected session what the
+clipboard holds at connect and again at every change, whichever window
+has the keyboard, and hands the content over as soon as the host asks.
+Every remote desktop open in Toolbox could therefore read everything
+copied anywhere on the PC for as long as it stayed connected. The earlier
+addendum's "Clipboard redirection is on" did not say so.
+
+**The clipboard, now.** Sessions connect with the control's manual
+clipboard mode (`ManualClipboardSyncEnabled`, then `IMsRdpClipboard`).
+The control then tells the host nothing until the pane says so:
+
+- A session is told what this PC's clipboard holds only while its pane
+  has the keyboard: Toolbox's window is the active one and the keyboard
+  focus is inside that session's control. Sessions in other panes, other
+  workspaces or behind another program are told nothing. Checked in the
+  app with two sessions open at once: the one in use was told and read
+  the text, the other received only the empty list sent at connect.
+- When the clipboard changes after an offer, the control itself takes
+  the offer back (measured: it sends an empty list), so what was copied
+  later in another program was never offered and cannot be asked for.
+- What was copied on the remote side reaches this PC's clipboard only
+  while the pane has the keyboard, or in the moment it gives it up.
+- **What remains readable:** anything on the clipboard when you click
+  into a remote desktop, and anything you copy while working in one,
+  passwords copied from a password manager included. The host does not
+  have to wait for a paste; it can ask the moment it is told. That is
+  how every RDP client's clipboard works; Toolbox narrows it to the
+  session in front.
+- **What a host can do to this PC:** put text or files on the clipboard
+  while its pane is in use. The risk is paste-jacking: a compromised
+  host swaps the clipboard just before you paste somewhere else. Unlike
+  the Mac build, files offered by a host are accepted; they are written
+  by Microsoft's control, and only when you paste them.
+- Toolbox itself never sees clipboard contents, only whether either side
+  has something new. The log records that an offer or a fetch happened
+  and for which connection.
+- The control's clipboard object is called through its function table
+  (it answers no interface query for itself). The positions are those of
+  the type library in `mstscax.dll`, and the object is only fetched after
+  the control has answered for the interface that defines them.
+- **Fail-open, on purpose:** where the control has no manual mode (an
+  older Windows), the session falls back to the automatic mode described
+  above rather than losing the clipboard, and the log says so. On
+  Windows 11 the manual mode is there.
+- View ▸ Remote Desktop ▸ Share Clipboard off: new sessions get no
+  clipboard channel at all (checked: the test server sees none). For a
+  session that is already open, nothing new is offered or fetched, but
+  what it was last told stays readable until the clipboard changes.
+- `--assume-keyboard` drops the "has the keyboard" condition. It exists
+  as a launch argument only, for checks that cannot bring the app to the
+  front.
+
+**Fast Graphics.** Off sets the control's `EnableHardwareMode` to false:
+no Direct3D device, decoding and drawing in software. Either way the
+host's graphics data is parsed by Microsoft's control; nothing of
+Toolbox's own decodes it.
+
+**Changed because of the review.**
+
+- *Review:* `cargo audit` reported RUSTSEC-2023-0071 (the "Marvin"
+  timing side channel in the `rsa` crate, reached through the SSH
+  library when an RSA key signs). The dependencies were updated
+  (`russh` 0.65.2, `rsa` 0.10.0, patch releases elsewhere); the audit
+  now reports no vulnerability. It still lists two unmaintained crates:
+  `basic-toml` (build tooling of the bindings) and `chrono` (dates in
+  the SFTP and FTP libraries).
+- *Review:* a file's name comes from the server. The download code
+  already kept to a plain name inside the chosen folder, but it changed
+  a name with separators into its last part without saying so, and it
+  let through the names Windows reserves for devices: a download called
+  `COM1` would have been written to the serial port, `NUL` thrown away.
+  Such names, names with a colon, and names ending in a dot or a space
+  (which Windows trims, so they can land on another file) are now
+  refused with a message.
+- *Review:* a remote program sets the terminal's title, and the terminal
+  accepts titles of megabytes. The pane header showed them as they came,
+  which a hostile host could use to stall the window. Titles are now
+  kept to one line of at most 200 characters.
+- *Review:* log entries could be forged. Error text from a server and
+  names from a directory went into the log as they were, so a line break
+  in them started what looked like a new entry. Control characters are
+  now written in escaped form. The end-to-end checks assert on this log.
+- *Review:* the RDP pane now switches off every device redirection by
+  name (ports, smart cards, plug-and-play and point-of-service devices,
+  besides drives and printers). These were the control's defaults; they
+  no longer depend on staying so.
+
+**Noted and not changed.**
+
+- **Network Level Authentication is not enforced.** The control asks
+  for it, but a server, or someone in the middle, that offers only TLS
+  is accepted, and the password then goes to whoever presented the
+  certificate, once the certificate warning has been answered with Yes.
+  With NLA the same click reveals nothing to someone who does not know
+  the password. The Mac build always requires NLA. No setting of the
+  control was found that requires it and could be checked here (direct
+  CredSSP without negotiation may be one; it needs a real Windows host
+  to try). Until then: a certificate warning for a host that normally
+  shows none is a reason to say No. The warning's "Don't ask me again"
+  box stores the certificate's hash under
+  `HKCU\Software\Microsoft\Terminal Server Client\Servers`.
+- The certificate warning belongs to the control and blocks the whole
+  window, every session in it included, until it is answered.
+- The control's zoom (`ZoomLevel`) is not used: setting it while no
+  session is up ends the process with an access violation inside the
+  control, which would take every open session with it.
+- `op` is started without a console window now. Nothing else about how
+  it is found or run changed; the earlier note on `PATH` stands.
+- The package still carries its own .NET runtime (10.0.15 in 0.2.0); the
+  earlier note on servicing stands.
+
+**Releases.** The check that keeps build paths out of a package stopped
+the first 0.2.0 package: `Toolbox.dll` named the profile folder of the
+build account. `dotnet publish` had reused the assembly the ordinary
+build compiled a moment earlier at the same commit, and that one records
+the full path of its debug file. Every C# build now maps the checkout's
+folder to a neutral name, and the package step compiles afresh. 0.1.0's
+`Toolbox.dll` was clean (searched again); its `toolbox_core.dll` is as
+the previous addendum says.
+
+**Not verified.** No real Windows host was available: the clipboard rule
+is tested against the IronRDP test server, text only (file copy rests on
+the control), and the owner's clipboard was not overwritten for a test,
+so "a change while another pane is in use is not offered" is shown with
+the control alone and, in the app, with two sessions at once. Windows 10
+has not run this build.

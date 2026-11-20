@@ -21,9 +21,32 @@ internal static class Log
     public static void Error(string message, Exception? exception = null) =>
         Write("ERROR", exception is null ? message : $"{message}: {exception.GetType().Name}: {exception.Message}");
 
+    /// <summary>
+    /// One entry is one line. Messages can carry text from the other end of a
+    /// connection (an error a server sent, a name from a directory); a line
+    /// break in it must not be able to pass for an entry of its own.
+    /// </summary>
+    internal static string OneLine(string message)
+    {
+        if (!message.Any(char.IsControl)) return message;
+        var builder = new StringBuilder(message.Length + 8);
+        foreach (var c in message)
+        {
+            builder.Append(c switch
+            {
+                '\r' => "\\r",
+                '\n' => "\\n",
+                '\t' => "\t",
+                _ when char.IsControl(c) => $"\\u{(int)c:x4}",
+                _ => c.ToString(),
+            });
+        }
+        return builder.ToString();
+    }
+
     private static void Write(string level, string message)
     {
-        var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {level} {message}{Environment.NewLine}";
+        var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {level} {OneLine(message)}{Environment.NewLine}";
         Debug.Write(line);
         lock (Gate)
         {

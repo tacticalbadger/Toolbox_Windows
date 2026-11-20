@@ -212,6 +212,28 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
         }
         LockVaultItem.IsEnabled = VaultManager.Shared.Vault.IsUnlocked();
         RequireAuthItem.IsChecked = VaultManager.Shared.RequiresAuthentication;
+        RdpGraphicsItem.IsChecked = AppSettings.Shared.RdpFastGraphics;
+        RdpClipboardItem.IsChecked = AppSettings.Shared.RdpShareClipboard;
+    }
+
+    // ----- View > Remote Desktop -----
+
+    private void OnToggleRdpGraphics(object sender, RoutedEventArgs e)
+    {
+        AppSettings.Shared.RdpFastGraphics = !AppSettings.Shared.RdpFastGraphics;
+        RemoteDesktopSwitched("Fast Graphics", AppSettings.Shared.RdpFastGraphics);
+    }
+
+    private void OnToggleRdpClipboard(object sender, RoutedEventArgs e)
+    {
+        AppSettings.Shared.RdpShareClipboard = !AppSettings.Shared.RdpShareClipboard;
+        RemoteDesktopSwitched("Share Clipboard", AppSettings.Shared.RdpShareClipboard);
+    }
+
+    private static void RemoteDesktopSwitched(string name, bool on)
+    {
+        Log.Info($"remote desktop: {name} {(on ? "on" : "off")}");
+        AppSettings.Shared.SaveSoon();
     }
 
     // ----- Menu and toolbar -----
@@ -275,7 +297,8 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
     {
         foreach (var theme in TerminalTheme.All)
         {
-            var item = new MenuItem { Header = theme.Name, Tag = theme.Id, IsCheckable = false };
+            // Checkable so the current theme shows its mark; the state is set each time the menu opens.
+            var item = new MenuItem { Header = theme.Name, Tag = theme.Id, IsCheckable = true };
             item.Click += (_, _) => ThemeStore.Shared.Current = theme;
             ThemeMenu.Items.Add(item);
         }
@@ -339,10 +362,33 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
         AppSettings.Shared.SaveSoon();
     }
 
+    private void OnSidebarResizing(object sender, DragStartedEventArgs e) => LiveResize.Begin();
+
     private void OnSidebarResized(object sender, DragCompletedEventArgs e)
     {
+        LiveResize.End();
         AppSettings.Shared.SidebarWidth = SidebarColumn.ActualWidth;
         AppSettings.Shared.SaveSoon();
+    }
+
+    private const int WmEnterSizeMove = 0x0231;
+    private const int WmExitSizeMove = 0x0232;
+
+    /// <summary>
+    /// Dragging the window's edge resizes every pane step by step. Remote
+    /// desktops wait for the end of the drag before asking for a new size.
+    /// </summary>
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        if (PresentationSource.FromVisual(this) is System.Windows.Interop.HwndSource source) source.AddHook(WindowHook);
+    }
+
+    private static IntPtr WindowHook(IntPtr window, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (message == WmEnterSizeMove) LiveResize.Begin();
+        else if (message == WmExitSizeMove) LiveResize.End();
+        return IntPtr.Zero;
     }
 
     private void RestorePlacement()

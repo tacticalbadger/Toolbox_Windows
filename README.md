@@ -32,8 +32,8 @@ core/     Rust crate toolbox-core: SSH (russh), SFTP, FTP/FTPS, the vault,
 app/      C# WPF application (.NET 10): workspaces and panes, terminal
           (xterm.js in WebView2), RDP (Microsoft's mstscax control), file
           browser, sidebar tree, editors, vault key and owner check.
-tools/    build.ps1 and the end-to-end harness (tools\e2e).
-docs/     Security review and Royal TS reference material.
+tools/    build.ps1, publish.ps1 and the end-to-end harness (tools\e2e).
+docs/     Security review, release notes and Royal TS reference material.
 ```
 
 ## Dependencies
@@ -63,7 +63,7 @@ credentials.
 ```powershell
 tools\build.ps1                  # core, terminal assets and app, for this machine's architecture
 tools\build.ps1 run              # start build\app\win-<arch>\Toolbox.exe
-tools\build.ps1 test             # Rust tests (in-process SSH, SFTP and FTP servers)
+tools\build.ps1 test             # Rust tests (in-process SSH, SFTP and FTP servers), then the app's unit tests
 tools\build.ps1 app -Restart     # rebuild the app and relaunch it
 tools\build.ps1 core app -Arch x64
 tools\build.ps1 clean
@@ -82,7 +82,7 @@ Your connections, credentials, vault and settings live in
 ## Sharing builds with the team
 
 ```powershell
-Set-Content VERSION 0.2.0                  # when the version should change
+Set-Content VERSION 0.3.0                  # when the version should change
 tools\build.ps1 core assets package        # build\release\Toolbox-<version>-win-arm64.zip (on an ARM64 PC)
 tools\build.ps1 core package -Arch x64     # ...-win-x64.zip; cross-compiles, no extra tools needed
 tools\publish.ps1                          # GitHub Release v<version> with the zips and SHA256SUMS
@@ -121,8 +121,20 @@ then every recipient sees the SmartScreen warning once.
   passphrase prompt), private keys from the vault or 1Password, and the
   SSH agent pipe (Windows OpenSSH or 1Password).
 - RDP through Microsoft's own client control: NLA, the usual certificate
-  warning when a server cannot be verified, clipboard, and a desktop that
-  follows the pane's size in real pixels.
+  warning when a server cannot be verified, and the host's modern
+  graphics (the graphics pipeline with H.264 when the host offers it,
+  decoded by the graphics card). The desktop follows the pane's size in
+  real pixels and is shown pixel for pixel. While a window edge or a
+  divider is dragged the picture is kept (shrunk to fit when the pane gets
+  smaller) and the host is asked for the new size when you let go.
+- The clipboard is shared with remote desktops: text and files, in both
+  directions. This PC's clipboard is offered to a remote desktop only
+  while its pane is the one you are working in; `docs/SECURITY-REVIEW.md`
+  says exactly what a host can and cannot get at.
+- View ▸ Remote Desktop has two switches for every RDP connection, both
+  applied when a session connects: Fast Graphics (off decodes and draws
+  in software, for a PC whose picture comes out garbled or black) and
+  Share Clipboard.
 - File Transfer connections over SFTP, FTP over TLS (explicit FTPS) or
   plain FTP: navigate, upload, download with progress, new folder, rename,
   delete. An FTPS server with an untrusted certificate asks first; plain
@@ -130,11 +142,14 @@ then every recipient sees the SmartScreen warning once.
   browser over SFTP.
 - A sidebar tree like Royal TS: folders (nest with `/`), providers as
   folders in place with what they generate underneath, drag and drop
-  between folders, context menus on every node, a filter, and flat "All
-  Connections" and "All Credentials" lists. Expansion is remembered.
+  between folders, and context menus on every node. The filter field
+  above it narrows the whole tree. Expansion is remembered.
 - Credentials: kept encrypted in the local vault, fetched from 1Password
-  when used, or asked for. A connection can pick a credential, carry its
-  own username and password (stored in the vault), or use its folder's
+  when used, or asked for. A connection can pick a credential (the picker
+  groups vault, 1Password and ask-each-time entries and has a search
+  field: type part of a name, username or folder and everything else is
+  hidden), carry its own username and password (stored in the vault), or
+  use its folder's
   credential (right-click a folder ▸ Set Credential…; nearest folder wins;
   such folders show a key badge).
 - Providers: 1Password items become credentials through the `op` CLI;
@@ -173,9 +188,13 @@ keep going to the terminal.
 
 Compared with the Mac app: **VNC** (a VNC connection says so instead of
 opening), code signing and an installer (releases are unsigned zips), the
-app icon, selecting several sidebar items at once, and unit tests for the
-C# side.
-`CLAUDE.md` has the details and the order.
+app icon, and selecting several sidebar items at once. From the Mac's
+0.3.0, one switch is missing: View ▸ Remote Desktop ▸ Retina Resolution,
+which asks for a desktop with a quarter of the pixels and magnifies it.
+Microsoft's control cannot magnify a picture dependably (its zoom leaves
+graphics-pipeline output unscaled and takes the app down when it is set
+at the wrong moment), so Windows always asks for the pane's full pixel
+size. `CLAUDE.md` has the details and the order.
 
 ## Trying it without real hosts
 
@@ -183,8 +202,9 @@ C# side.
 data.
 
 ```powershell
-tools\e2e\make-fixture.ps1                           # keys, known_hosts, fake op, store -> build\e2e
-tools\e2e\servers.ps1 start                          # SSH+SFTP :2222, FTP :2121, FTPS :2122 (demo / secret)
+tools\e2e\make-fixture.ps1                           # keys, known_hosts, fake op with a few dozen logins, store -> build\e2e
+tools\e2e\make-rdp-server.ps1                        # once: builds the RDP test server (fetched from the Mac repository, a few minutes)
+tools\e2e\servers.ps1 start                          # SSH+SFTP :2222, FTP :2121, FTPS :2122, RDP :3390 and :3391 (demo / secret)
 tools\e2e\launch.ps1 --connect echo --files ftp-local   # relaunch against the fixture, owner check off
 tools\e2e\capture.ps1                                # screenshot every Toolbox window into build\e2e\shots
 tools\e2e\ui.ps1 tree                                # drive the app: tree, invoke, click, drag, keys, text
@@ -199,11 +219,22 @@ cargo run --example echo_server --features test-support -- --key <openssh-privat
 cargo run --example ftp_server --features test-support -- --port 2121 [--tls]            # FTP or FTPS
 ```
 
+The RDP test server on 3390 draws plain bitmaps and honours resize
+requests; the one on 3391 offers the graphics pipeline. Both ask for
+whatever the app announces on its clipboard and log its size, never its
+contents. Their certificates are self-signed, so the certificate warning
+comes first.
+
 Launch arguments: `--connect <id>` and `--files <id>` (both may repeat),
 `--expand-all`, and the testing aids `--demo-move`, `--demo-close`,
+`--demo-split` (splits the focused pane, which resizes what is in it),
 `--edit-connection <id|new>`, `--edit-credential <id|new>`,
 `--edit-provider <id|new>`, `--set-folder-credential <path>`,
-`--demo-provider-account <provider-id>` and `--unlock-vault`. Environment
+`--demo-credential-search <text>` (credential pickers open with that
+search typed), `--demo-provider-account <provider-id>`, `--unlock-vault`
+and `--assume-keyboard` (treats remote desktop panes as the one in use
+when the app cannot be in front; for clipboard checks, never for normal
+use). Environment
 overrides: `TOOLBOX_STORE_PATH`, `TOOLBOX_VAULT_PATH`,
 `TOOLBOX_VAULT_KEY_PATH`, `TOOLBOX_SETTINGS_PATH`, `TOOLBOX_KNOWN_HOSTS`,
 `TOOLBOX_LOG_PATH`, `TOOLBOX_WEBVIEW_DATA`.
@@ -211,5 +242,6 @@ overrides: `TOOLBOX_STORE_PATH`, `TOOLBOX_VAULT_PATH`,
 ## Security
 
 `docs/SECURITY-REVIEW.md` records the review findings and residual risks,
-with an addendum per security-relevant change (most recently the Windows
-vault key, owner check, terminal and RDP).
+with an addendum per security-relevant change (most recently the review
+for 0.2.0: clipboard sharing with remote desktops, and what was hardened
+after reading the whole Windows app again).

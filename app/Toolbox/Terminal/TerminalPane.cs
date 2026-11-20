@@ -247,8 +247,8 @@ internal sealed class TerminalPane : Grid, IPaneContent
                     OnPageReady(message.GetProperty("cols").GetInt32(), message.GetProperty("rows").GetInt32());
                     break;
                 case "title":
-                    var text = message.GetProperty("d").GetString();
-                    SetTitle(string.IsNullOrEmpty(text) ? Connection.Name : $"{Connection.Name} · {text}");
+                    var text = CleanTitle(message.GetProperty("d").GetString());
+                    SetTitle(text.Length == 0 ? Connection.Name : $"{Connection.Name} · {text}");
                     break;
                 case "focus":
                     FocusRequested?.Invoke();
@@ -324,6 +324,25 @@ internal sealed class TerminalPane : Grid, IPaneContent
         if (uri.Scheme is not ("http" or "https" or "mailto")) return;
         try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); }
         catch (Exception e) { Log.Warn($"terminal: could not open the link: {e.Message}"); }
+    }
+
+    private const int MaxTitleLength = 200;
+
+    /// <summary>
+    /// A title the remote program set, made fit for a pane header: it is the
+    /// remote side's to choose, so it is kept to one short line. (A terminal
+    /// accepts titles of megabytes, which would stall the window.)
+    /// </summary>
+    internal static string CleanTitle(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        var builder = new StringBuilder(Math.Min(text.Length, MaxTitleLength));
+        foreach (var c in text)
+        {
+            if (builder.Length >= MaxTitleLength) break;
+            builder.Append(char.IsControl(c) ? ' ' : c);
+        }
+        return builder.ToString().Trim();
     }
 
     private void SetTitle(string value)

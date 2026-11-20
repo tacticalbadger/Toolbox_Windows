@@ -10,14 +10,13 @@ using Toolbox.Workspaces;
 namespace Toolbox.Sidebar;
 
 /// <summary>
-/// The sidebar: a tree of folders, providers, connections and credentials,
-/// plus flat "all" lists, with drag and drop between folders and onto panes.
+/// The sidebar: one tree of folders, providers, connections and credentials,
+/// with drag and drop between folders and onto panes. The filter field
+/// searches the whole tree.
 /// </summary>
 internal partial class SidebarView : UserControl, IDragTarget
 {
     private const string LibraryId = "group:library";
-    private const string AllConnectionsId = "group:connections";
-    private const string AllCredentialsId = "group:credentials";
 
     private readonly AppModel model = AppModel.Shared;
     private readonly ProviderSync sync = ProviderSync.Shared;
@@ -118,31 +117,20 @@ internal partial class SidebarView : UserControl, IDragTarget
         var filtering = filter.Trim().Length > 0;
         if (filtering) Prune(library, children);
 
-        var allConnections = Node(AllConnectionsId, n => n.SetGroup("All Connections"), used);
-        foreach (var c in model.Connections.OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase))
-        {
-            if (Matches(c.Name, c.Host, c.Username)) AttachTo(Node("all-conn:" + c.Id, n => n.SetConnection(c), used), allConnections);
-        }
-        var allCredentials = Node(AllCredentialsId, n => n.SetGroup("All Credentials"), used);
-        foreach (var c in model.Credentials.OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase))
-        {
-            if (Matches(c.Name, c.Username)) AttachTo(Node("all-cred:" + c.Id, n => n.SetCredential(c), used), allCredentials);
-        }
-
         // Nodes whose record is gone leave the cache; pruned nodes stay out of the tree.
         foreach (var stale in cache.Keys.Where(id => !used.Contains(id)).ToList()) cache.Remove(stale);
 
         foreach (var node in cache.Values)
         {
             var wanted = children.TryGetValue(node, out var list) ? list : [];
-            if (ReferenceEquals(node, library) || node.Kind != SidebarNodeKind.Group) Sort(wanted);
+            Sort(wanted);
             Replace(node.Children, wanted);
             node.IsSyncing = node.Provider is { } p && sync.IsSyncing(p.Id);
             node.BadgeTip = node.OwnFolder is { } folder && model.FolderCredential(folder) is { } credential
                 ? "Credential: " + credential.Name
                 : null;
         }
-        Replace(roots, [library, allConnections, allCredentials]);
+        Replace(roots, [library]);
 
         if (filtering)
         {
@@ -219,7 +207,7 @@ internal partial class SidebarView : UserControl, IDragTarget
 
     private void OnSelectionChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
-        // The three headings are not things to select.
+        // The heading is not a thing to select.
         if (e.NewValue is SidebarNode { IsGroup: true } group) group.IsSelected = false;
     }
 
@@ -425,7 +413,7 @@ internal partial class SidebarView : UserControl, IDragTarget
     /// <summary>
     /// The node a drop should land on and the folder path it means (null path
     /// = top level). Items retarget to their containing folder; nothing can be
-    /// dropped into a provider or the flat lists.
+    /// dropped into a provider.
     /// </summary>
     private (SidebarNode Node, string? Folder)? DropTargetFor(SidebarNode? node)
     {

@@ -187,68 +187,6 @@ internal sealed class FormBuilder
     }
 }
 
-/// <summary>One entry of a credential drop-down.</summary>
-internal sealed record CredentialOption(string? Id, string Label, string Group)
-{
-    public override string ToString() => Label;
-}
-
-/// <summary>Drop-down over the credentials, grouped by where their secret lives.</summary>
-internal static class CredentialPicker
-{
-    /// <summary>
-    /// "Name (username)", or whichever of the two exists, so items without a
-    /// title still read as something.
-    /// </summary>
-    public static string Label(Credential credential)
-    {
-        var name = credential.Name.Trim();
-        var user = credential.Username.Trim();
-        return (name.Length == 0, user.Length == 0) switch
-        {
-            (false, false) => name == user ? name : $"{name} ({user})",
-            (false, true) => name,
-            (true, false) => user,
-            _ => "Untitled credential",
-        };
-    }
-
-    public static ComboBox Create(IReadOnlyList<Credential> credentials, string noneLabel,
-                                  string? selected, Action<string?> changed, string automationId)
-    {
-        var options = new List<CredentialOption> { new(null, noneLabel, "") };
-        void Add(string group, Func<Credential, bool> belongs) =>
-            options.AddRange(credentials.Where(belongs)
-                .Select(c => new CredentialOption(c.Id, Label(c), group))
-                .OrderBy(o => o.Label, StringComparer.CurrentCultureIgnoreCase));
-        Add("Vault", c => c.Kind is CredentialKind.Vault);
-        Add("1Password", c => c.Kind is CredentialKind.OnePassword);
-        Add("Ask each time", c => c.Kind is CredentialKind.Prompt);
-
-        var view = new ListCollectionView(options);
-        view.GroupDescriptions!.Add(new PropertyGroupDescription(nameof(CredentialOption.Group)));
-
-        var header = new FrameworkElementFactory(typeof(TextBlock));
-        header.SetBinding(TextBlock.TextProperty, new Binding("Name"));
-        header.SetValue(TextBlock.FontSizeProperty, 11.0);
-        header.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
-        header.SetValue(FrameworkElement.MarginProperty, new Thickness(10, 6, 0, 2));
-        header.SetResourceReference(TextBlock.ForegroundProperty, "TextFillColorTertiaryBrush");
-        var headerStyle = new Style(typeof(TextBlock));
-        var hideEmpty = new DataTrigger { Binding = new Binding("Name"), Value = "" };
-        hideEmpty.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed));
-        headerStyle.Triggers.Add(hideEmpty);
-        header.SetValue(FrameworkElement.StyleProperty, headerStyle);
-
-        var combo = new ComboBox { ItemsSource = view, HorizontalAlignment = HorizontalAlignment.Stretch };
-        combo.GroupStyle.Add(new GroupStyle { HeaderTemplate = new DataTemplate { VisualTree = header } });
-        combo.SelectedItem = options.FirstOrDefault(o => o.Id == selected) ?? options[0];
-        combo.SelectionChanged += (_, _) => changed((combo.SelectedItem as CredentialOption)?.Id);
-        AutomationProperties.SetAutomationId(combo, automationId);
-        return combo;
-    }
-}
-
 /// <summary>Shared chrome of the editor dialogs: scrolling form, validation line, button row.</summary>
 internal abstract class EditorWindow : Window
 {

@@ -50,6 +50,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- No translucent (Mica) backdrop behind the window. With it, Windows
+         treats what a native child window draws through GDI as see-through:
+         a remote desktop that the RDP control scales, or draws in software,
+         comes out washed with the backdrop, and its black as the backdrop
+         itself. -->
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Appearance.DisableFluentThemeWindowBackdrop" Value="true" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Toolbox.Tests" />
   </ItemGroup>
 

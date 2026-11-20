@@ -144,11 +144,20 @@ pub async fn resolve_one_password_item(
     get_item(&path, account.as_deref(), &item_id).await
 }
 
+/// `CREATE_NO_WINDOW`: a console program started by a windowed app otherwise
+/// gets a console window of its own, which flashes up at every call.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 async fn run_op(op_path: &Path, args: &[String]) -> Result<String, CoreError> {
-    let output = Command::new(op_path)
+    let mut command = Command::new(op_path);
+    command
         .args(args)
         // Matches the Royal TS script; silences an ObjC runtime warning.
-        .env("OBJC_DEBUG_MISSING_POOLS", "NO")
+        .env("OBJC_DEBUG_MISSING_POOLS", "NO");
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command
         .output()
         .await
         .map_err(|e| CoreError::Io(format!("could not run {}: {e}", op_path.display())))?;

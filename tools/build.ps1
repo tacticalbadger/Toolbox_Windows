@@ -349,6 +349,13 @@ function New-Package {
 
     Step "package: dotnet publish (self-contained, $Rid, $Version build $number)"
     $project = Join-Path $App 'Toolbox\Toolbox.csproj'
+    # Always compiled afresh: an assembly left by the "app" target at the same
+    # commit would be reused as it is, debug information and all, whatever
+    # this step asks for.
+    $intermediate = Join-Path $App 'Toolbox\obj\Release'
+    if (Test-Path $intermediate) {
+        Get-ChildItem $intermediate -Directory -Recurse -Filter $Rid | ForEach-Object { Remove-Item -Recurse -Force $_.FullName }
+    }
     Invoke-Native 'dotnet publish' {
         dotnet publish $project -c Release -r $Rid --self-contained true "-p:ToolboxBuild=$number" `
             -p:DebugType=none -p:DebugSymbols=false -o $stage --nologo -v minimal

@@ -7,8 +7,9 @@ namespace Toolbox.Support;
 
 /// <summary>
 /// Preferences that are not connections: terminal theme and text size, the
-/// vault's "require authentication" switch, sidebar expansion and the window
-/// position. Stored as settings.json next to the connections.
+/// vault's "require authentication" switch, the Remote Desktop switches,
+/// sidebar expansion and the window position. Stored as settings.json next
+/// to the connections.
 /// </summary>
 internal sealed class AppSettings
 {
@@ -32,6 +33,22 @@ internal sealed class AppSettings
 
     /// <summary>Ids of the sidebar nodes that are expanded. Null until the tree has been shown once.</summary>
     public List<string>? ExpandedNodes { get; set; }
+
+    // View > Remote Desktop: switches for every RDP connection, both on by default.
+
+    /// <summary>
+    /// Let the Remote Desktop control decode and draw with the graphics card.
+    /// Off is the software path, for a PC whose picture comes out garbled or
+    /// black. Applies when connecting.
+    /// </summary>
+    public bool RdpFastGraphics { get; set; } = true;
+
+    /// <summary>
+    /// Share the clipboard with remote desktops. Whether a session has the
+    /// clipboard at all is decided when it connects; switching this off also
+    /// stops telling sessions that are already open about anything new.
+    /// </summary>
+    public bool RdpShareClipboard { get; set; } = true;
 
     public bool SidebarVisible { get; set; } = true;
     public double SidebarWidth { get; set; } = 290;

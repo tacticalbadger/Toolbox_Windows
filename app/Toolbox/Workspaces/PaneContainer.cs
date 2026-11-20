@@ -223,6 +223,9 @@ internal sealed class PaneContainer : Panel, IDragTarget
             Cursor = axis == SplitAxis.Horizontal ? Cursors.SizeWE : Cursors.SizeNS,
             Focusable = false,
         };
+        // Remote desktops ask for their new size when the divider is let go.
+        thumb.DragStarted += (_, _) => LiveResize.Begin();
+        thumb.DragCompleted += (_, _) => LiveResize.End();
         thumb.DragDelta += (_, e) =>
         {
             var slot = dividerSlots.FirstOrDefault(d => d.Key == key);

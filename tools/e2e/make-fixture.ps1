@@ -4,8 +4,9 @@
 
 .DESCRIPTION
     SSH keys for the test servers, a known_hosts file, a fake 1Password CLI
-    (op.cmd), a store with connections for the local test servers plus a
-    Royal-style folder tree, and settings that skip the owner check. Nothing
+    (op.cmd) with a few dozen made-up logins, a store with connections for
+    the local test servers plus a Royal-style folder tree, and settings that
+    skip the owner check. Nothing
     here touches the real app data: launch.ps1 points the app at it with the
     TOOLBOX_* environment overrides.
 
@@ -51,12 +52,30 @@ $hostPub = (Get-Content (Join-Path $Dir 'host_key.pub') -TotalCount 1) -split ' 
 
 # Fake 1Password CLI: enough of "op item list" / "op item get" for the
 # provider sync and credential resolution. Calls are logged to op.log.
+# Besides the two items the connections use, the vault holds a few dozen
+# made-up logins, so the credential pickers have something to search through.
+$items = @(
+    '{"id":"i1","title":"Echo login","vault":{"id":"v","name":"work"},"category":"LOGIN","additional_information":"demo"}',
+    '{"id":"i2","title":"Lab SSH key","vault":{"id":"v","name":"work"},"category":"SSH_KEY"}'
+)
+$n = 10
+foreach ($site in 'atl', 'dfw', 'sea') {
+    foreach ($role in 'db', 'web', 'app', 'cache', 'backup') {
+        foreach ($env in 'prod', 'stage') {
+            foreach ($user in 'admin', 'deploy') {
+                $n++
+                $items += '{"id":"g' + $n + '","title":"' + "$role-$env-$site $user" + '","vault":{"id":"v","name":"work"},"category":"LOGIN","additional_information":"svc_' + "${role}_$user" + '"}'
+            }
+        }
+    }
+}
+[System.IO.File]::WriteAllText((Join-Path $Dir 'op-items.json'), "[`n" + ($items -join ",`n") + "`n]`n", $Utf8)
+
 $op = @(
     '@echo off',
     'echo %* >> "%~dp0op.log"',
     'if "%1 %2"=="item list" (',
-    '  echo [{"id":"i1","title":"Echo login","vault":{"id":"v","name":"work"},"category":"LOGIN","additional_information":"demo"},',
-    '  echo {"id":"i2","title":"Lab SSH key","vault":{"id":"v","name":"work"},"category":"SSH_KEY"}]',
+    '  type "%~dp0op-items.json"',
     '  exit /b 0',
     ')',
     'if "%1 %2"=="item get" (',
@@ -78,6 +97,7 @@ $store = @'
     {"id":"echo-1p","name":"Local echo via 1Password","kind":"Ssh","host":"127.0.0.1","port":2222,"username":"","auth":{"Credential":{"credential_id":"op-fake:i1"}},"folder":null,"tags":[],"source":null},
     {"id":"echo-folder","name":"jump02 (folder credential)","kind":"Ssh","host":"127.0.0.1","port":2222,"username":"","auth":"FolderCredential","folder":"Jump Boxes","tags":[],"source":null},
     {"id":"rdp-local","name":"Local RDP (port 3390)","kind":"Rdp","host":"127.0.0.1","port":3390,"username":"","auth":{"Credential":{"credential_id":"op-fake:i1"}},"folder":null,"tags":[],"source":null},
+    {"id":"rdp-gfx","name":"Local RDP, graphics pipeline (port 3391)","kind":"Rdp","host":"127.0.0.1","port":3391,"username":"","auth":{"Credential":{"credential_id":"op-fake:i1"}},"folder":null,"tags":[],"source":null},
     {"id":"vnc-local","name":"Local VNC (nothing listening)","kind":"Vnc","host":"127.0.0.1","port":5900,"username":"","auth":{"Credential":{"credential_id":"op-fake:i1"}},"folder":null,"tags":[],"source":null},
     {"id":"sftp-local","name":"Files over SFTP (echo server)","kind":"Sftp","host":"127.0.0.1","port":2222,"username":"demo","auth":{"KeyFile":{"path":"@DIR@\\user_key"}},"folder":"File Transfer","tags":[],"source":null},
     {"id":"ftp-local","name":"Files over FTP (plain)","kind":"Ftp","host":"127.0.0.1","port":2121,"username":"","auth":{"Credential":{"credential_id":"op-fake:i1"}},"folder":"File Transfer","tags":[],"source":null},

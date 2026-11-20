@@ -80,7 +80,10 @@ public sealed class RdpClientEventSink : IRdpClientEvents
     public void OnLogonError(int error) => LogonError?.Invoke(error);
 }
 
-/// <summary>Settings of the control that are not on its automation interface (display scaling).</summary>
+/// <summary>
+/// Settings of the control that are not on its automation interface: display
+/// scaling, zoom, hardware graphics, manual clipboard sync.
+/// </summary>
 [ComImport]
 [Guid("302D8188-0052-4807-806A-362B628F9AC5")]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -90,4 +93,117 @@ internal interface IRdpExtendedSettings
 
     [return: MarshalAs(UnmanagedType.Struct)]
     object GetProperty([MarshalAs(UnmanagedType.BStr)] string name);
+}
+
+/// <summary>
+/// The control's clipboard in manual mode (IMsRdpClipboard, reached through
+/// IMsRdpClientNonScriptable7). With the "ManualClipboardSyncEnabled" setting
+/// on, the control tells the remote desktop what this PC's clipboard holds
+/// only when <see cref="OfferLocal"/> is called, and puts what was copied on
+/// the remote side on this PC's clipboard only when <see cref="TakeRemote"/>
+/// is. When this PC's clipboard changes after an offer, the control itself
+/// withdraws the offer. Without the setting, the control tells every
+/// connected session about every change, whichever window is in front.
+/// <para>
+/// The object does not answer QueryInterface for its own interface, so it is
+/// called through its function table. The positions are those of the
+/// control's type library (mstscax.dll), and a COM interface's table never
+/// changes once published.
+/// </para>
+/// </summary>
+internal sealed unsafe class RdpClipboard : IDisposable
+{
+    // IMsRdpClientNonScriptable7, and where its Clipboard property sits in its table.
+    private static readonly Guid NonScriptable7 = new("71B4A60A-FE21-46D8-A39B-8E32BA0C5ECC");
+    private const int ClipboardGetter = 69;
+
+    // IMsRdpClipboard, after IUnknown's three entries.
+    private const int CanSyncLocalToRemote = 3;
+    private const int SyncLocalToRemote = 4;
+    private const int CanSyncRemoteToLocal = 5;
+    private const int SyncRemoteToLocal = 6;
+
+    private nint self;
+
+    private RdpClipboard(nint self) => this.self = self;
+
+    /// <summary>Whether this version of the control has the manual clipboard at all.</summary>
+    public static bool IsSupported(object control)
+    {
+        var unknown = Marshal.GetIUnknownForObject(control);
+        try
+        {
+            var iid = NonScriptable7;
+            if (Marshal.QueryInterface(unknown, in iid, out var found) != 0) return false;
+            Marshal.Release(found);
+            return true;
+        }
+        finally
+        {
+            Marshal.Release(unknown);
+        }
+    }
+
+    /// <summary>The clipboard of a control, or null when it has none to give.</summary>
+    public static RdpClipboard? From(object control)
+    {
+        var unknown = Marshal.GetIUnknownForObject(control);
+        try
+        {
+            var iid = NonScriptable7;
+            if (Marshal.QueryInterface(unknown, in iid, out var settings) != 0) return null;
+            try
+            {
+                var table = *(nint**)settings;
+                var getter = (delegate* unmanaged[Stdcall]<nint, nint*, int>)table[ClipboardGetter];
+                nint clipboard = 0;
+                if (getter(settings, &clipboard) != 0 || clipboard == 0) return null;
+                return new RdpClipboard(clipboard);
+            }
+            finally
+            {
+                Marshal.Release(settings);
+            }
+        }
+        finally
+        {
+            Marshal.Release(unknown);
+        }
+    }
+
+    /// <summary>This PC's clipboard holds something the remote desktop has not been told about.</summary>
+    public bool HasLocalChanges => Ask(CanSyncLocalToRemote);
+
+    /// <summary>Tells the remote desktop what this PC's clipboard holds (kinds of data, no content).</summary>
+    public void OfferLocal() => Do(SyncLocalToRemote);
+
+    /// <summary>Something was copied on the remote side that is not on this PC's clipboard yet.</summary>
+    public bool HasRemoteChanges => Ask(CanSyncRemoteToLocal);
+
+    /// <summary>Puts what was copied on the remote side on this PC's clipboard.</summary>
+    public void TakeRemote() => Do(SyncRemoteToLocal);
+
+    private bool Ask(int slot)
+    {
+        if (self == 0) return false;
+        // The answer is a VARIANT_BOOL; an int's worth of room is given so a
+        // wider write cannot land outside it.
+        var answer = 0;
+        var function = (delegate* unmanaged[Stdcall]<nint, int*, int>)(*(nint**)self)[slot];
+        return function(self, &answer) == 0 && (answer & 0xFFFF) != 0;
+    }
+
+    private void Do(int slot)
+    {
+        if (self == 0) return;
+        var function = (delegate* unmanaged[Stdcall]<nint, int>)(*(nint**)self)[slot];
+        Marshal.ThrowExceptionForHR(function(self));
+    }
+
+    public void Dispose()
+    {
+        var pointer = self;
+        self = 0;
+        if (pointer != 0) Marshal.Release(pointer);
+    }
 }

@@ -181,7 +181,28 @@ internal sealed class PaneView : Border
         var live = Content?.IsLive ?? false;
         statusDot.SetResourceReference(Shape.FillProperty, live ? "SystemFillColorSuccessBrush" : "TextFillColorTertiaryBrush");
         AutomationProperties.SetHelpText(this, live ? "live" : "idle");
+        var cameUp = live && !wasLive;
+        wasLive = live;
+        // A session that has just come up in the active pane takes the
+        // keyboard, as if it had been there when the pane was chosen (a remote
+        // desktop has nothing to focus until it connects). Not while
+        // something is being typed elsewhere in the window.
+        if (!cameUp) return;
+        var session = Content;
+        // Once the window has caught up: a remote desktop's control is only
+        // there to take the keyboard after it has been shown.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (session is { IsLive: true } && ReferenceEquals(Content, session) && isActive &&
+                Window.GetWindow(this) is { IsActive: true } &&
+                Keyboard.FocusedElement is not (System.Windows.Controls.Primitives.TextBoxBase or PasswordBox))
+            {
+                session.FocusSession();
+            }
+        }, DispatcherPriority.Input);
     }
+
+    private bool wasLive;
 
     private void UpdateBorder()
     {

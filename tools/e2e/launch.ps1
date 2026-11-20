@@ -13,10 +13,11 @@
     -Exe runs another build than build\app, such as a packaged one.
 
     App arguments: --connect <id>, --files <id> (both repeatable),
-    --expand-all, --demo-move, --demo-close, --edit-connection <id|new>,
-    --edit-credential <id|new>, --edit-provider <id|new>,
-    --set-folder-credential <path>, --demo-provider-account <provider-id>,
-    --unlock-vault.
+    --expand-all, --demo-move, --demo-close, --demo-split,
+    --edit-connection <id|new>, --edit-credential <id|new>,
+    --edit-provider <id|new>, --set-folder-credential <path>,
+    --demo-credential-search <text>, --demo-provider-account <provider-id>,
+    --unlock-vault, --assume-keyboard.
 #>
 [CmdletBinding()]
 param(

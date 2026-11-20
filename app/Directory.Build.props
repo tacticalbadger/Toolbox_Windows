@@ -13,6 +13,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Deterministic>true</Deterministic>
+    <!-- The compiler writes where it was run into an assembly (the path of
+         its debug file, at least). This checkout's folder is under the
+         profile folder, which is the account name, and builds are handed
+         to other people: it is written as "toolbox" instead. -->
+    <PathMap>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))=toolbox</PathMap>
     <!-- Keep the commit hash out of the product version string. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>

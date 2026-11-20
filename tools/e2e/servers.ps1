@@ -6,12 +6,21 @@
       SSH + SFTP echo server  127.0.0.1:2222  (demo / secret; any public key)
       FTP server              127.0.0.1:2121  (demo / secret)
       FTPS (explicit TLS)     127.0.0.1:2122  (demo / secret, self-signed)
+      RDP                     127.0.0.1:3390  (demo / secret, self-signed) plain
+                                              graphics, honours resize requests
+      RDP, graphics pipeline  127.0.0.1:3391  the same, offering H.264
 
-        tools\e2e\servers.ps1 start [-Dir <fixture>] [-ExitAfter <secs>]
+        tools\e2e\servers.ps1 start [-Dir <fixture>] [-ExitAfter <secs>] [-RdpArgs '<options>']
         tools\e2e\servers.ps1 stop
         tools\e2e\servers.ps1 status
 
     -ExitAfter makes shells log out on their own (automatic pane close).
+
+    The RDP servers start only when tools\e2e\make-rdp-server.ps1 has built
+    them. Both paste whatever the app announces on its clipboard and log its
+    size, never its contents (rdp_server.log, rdp_gfx_server.log). -RdpArgs
+    replaces the options of the one on 3390, for example
+    '--copy-text hello' to have it copy that text on its side instead.
 #>
 [CmdletBinding()]
 param(
@@ -19,7 +28,8 @@ param(
     [ValidateSet('start', 'stop', 'status')]
     [string]$Action,
     [string]$Dir,
-    [int]$ExitAfter = 0
+    [int]$ExitAfter = 0,
+    [string]$RdpArgs = '--paste'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,7 +39,10 @@ $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Core = Join-Path $Root 'core'
 if (-not $Dir) { $Dir = Join-Path $Root 'build\e2e' }
 $Bin = Join-Path $Core 'target\debug\examples'
+$RdpBin = Join-Path $Root 'build\e2e-rdp\target\release'
+$HasRdp = Test-Path (Join-Path $RdpBin 'rdpsrv.exe')
 $Ports = [ordered]@{ ssh = 2222; ftp = 2121; ftps = 2122 }
+if ($HasRdp) { $Ports['rdp'] = 3390; $Ports['rdp-gfx'] = 3391 }
 
 $extra = @(
     (Join-Path $env:USERPROFILE '.cargo\bin'),
@@ -51,8 +64,12 @@ function Test-Port([int]$port) {
 }
 
 function Get-TestServers {
-    Get-Process -Name 'echo_server', 'ftp_server' -ErrorAction SilentlyContinue | Where-Object {
-        try { $_.Path -and $_.Path.StartsWith($Bin, [System.StringComparison]::OrdinalIgnoreCase) } catch { $false }
+    Get-Process -Name 'echo_server', 'ftp_server', 'rdpsrv' -ErrorAction SilentlyContinue | Where-Object {
+        try {
+            $_.Path -and ($_.Path.StartsWith($Bin, [System.StringComparison]::OrdinalIgnoreCase) -or
+                          $_.Path.StartsWith($RdpBin, [System.StringComparison]::OrdinalIgnoreCase))
+        }
+        catch { $false }
     }
 }
 
@@ -69,11 +86,11 @@ function Show-Status {
         $state = if (Test-Port $Ports[$name]) { 'up' } else { 'DOWN' }
         "${name}: $state"
     }
+    if (-not $HasRdp) { $parts += 'rdp: not built (tools\e2e\make-rdp-server.ps1)' }
     Write-Host ($parts -join '   ')
 }
 
-function Start-Server([string]$exe, [string[]]$arguments, [string]$log) {
-    $path = Join-Path $Bin "$exe.exe"
+function Start-Server([string]$path, [string[]]$arguments, [string]$log) {
     if (-not (Test-Path $path)) { return $false }
     $quoted = ($arguments | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } }) -join ' '
     # Through the shell, with cmd doing the redirection: started any other
@@ -104,11 +121,17 @@ switch ($Action) {
         $echoArgs = @('--key', (Join-Path $Dir 'host_key'), '--port', '2222')
         if ($ExitAfter -gt 0) { $echoArgs += @('--exit-after', "$ExitAfter") }
         $ftpRoot = Join-Path $Dir 'ftp-root'
-        Start-Server 'echo_server' $echoArgs 'echo_server' | Out-Null
-        Start-Server 'ftp_server' @('--port', '2121', '--root', $ftpRoot) 'ftp_server' | Out-Null
-        Start-Server 'ftp_server' @('--port', '2122', '--root', $ftpRoot, '--tls') 'ftps_server' | Out-Null
+        Start-Server (Join-Path $Bin 'echo_server.exe') $echoArgs 'echo_server' | Out-Null
+        Start-Server (Join-Path $Bin 'ftp_server.exe') @('--port', '2121', '--root', $ftpRoot) 'ftp_server' | Out-Null
+        Start-Server (Join-Path $Bin 'ftp_server.exe') @('--port', '2122', '--root', $ftpRoot, '--tls') 'ftps_server' | Out-Null
+        if ($HasRdp) {
+            $rdp = Join-Path $RdpBin 'rdpsrv.exe'
+            $plain = @('--port', '3390') + @($RdpArgs -split '\s+' | Where-Object { $_ })
+            Start-Server $rdp $plain 'rdp_server' | Out-Null
+            Start-Server $rdp @('--port', '3391', '--graphics-pipeline', '--paste') 'rdp_gfx_server' | Out-Null
+        }
 
-        $wanted = @(2222, 2121, 2122)
+        $wanted = @($Ports.Values)
         for ($i = 0; $i -lt 60; $i++) {
             if (@($wanted | Where-Object { -not (Test-Port $_) }).Count -eq 0) { break }
             Start-Sleep -Milliseconds 500

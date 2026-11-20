@@ -44,6 +44,10 @@ internal static class Icons
     public const string Error = "";
     public const string More = "";
 
+    public const string Search = "";
+    public const string Check = "";
+    public const string ChevronDown = "";
+
     /// <summary>A text block showing one glyph.</summary>
     public static TextBlock Glyph(string glyph, double size = 14, Brush? brush = null)
     {
