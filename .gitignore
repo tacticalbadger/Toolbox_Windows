@@ -11,6 +11,9 @@ app/**/obj/
 app/Generated/
 app/runtimes/
 
+# Fetched by "tools\build.ps1 assets" (xterm.js, pinned and hash-checked)
+app/Toolbox/Assets/Terminal/xterm/
+
 # Build and packaging output, e2e fixtures (hold test private keys)
 build/
 

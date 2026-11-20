@@ -42,24 +42,43 @@ impl std::fmt::Debug for ResolvedCredential {
     }
 }
 
-const CANDIDATE_PATHS: [&str; 2] = ["/opt/homebrew/bin/op", "/usr/local/bin/op"];
+#[cfg(windows)]
+const OP_BINARY: &str = "op.exe";
+#[cfg(not(windows))]
+const OP_BINARY: &str = "op";
 
-/// The `op` binary to use: an explicit path, a Homebrew install, or whatever
-/// is on `PATH`.
+/// Where the 1Password CLI lands when installed outside `PATH`: winget's
+/// link folder and the MSI's folder on Windows, Homebrew on macOS.
+fn candidate_paths() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        let mut out = Vec::new();
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            out.push(Path::new(&local).join(r"Microsoft\WinGet\Links").join(OP_BINARY));
+        }
+        if let Some(pf) = std::env::var_os("ProgramFiles") {
+            out.push(Path::new(&pf).join("1Password CLI").join(OP_BINARY));
+        }
+        out
+    } else {
+        vec![PathBuf::from("/opt/homebrew/bin/op"), PathBuf::from("/usr/local/bin/op")]
+    }
+}
+
+/// The `op` binary to use: an explicit path, whatever is on `PATH`, or a
+/// known install location.
 pub fn find_op_path(explicit: Option<&str>) -> Option<PathBuf> {
     if let Some(p) = explicit.map(str::trim).filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));
     }
-    for candidate in CANDIDATE_PATHS {
-        let path = Path::new(candidate);
-        if path.exists() {
-            return Some(path.to_path_buf());
+    if let Some(path_var) = std::env::var_os("PATH") {
+        if let Some(found) = std::env::split_paths(&path_var)
+            .map(|dir| dir.join(OP_BINARY))
+            .find(|p| p.is_file())
+        {
+            return Some(found);
         }
     }
-    let path_var = std::env::var_os("PATH")?;
-    std::env::split_paths(&path_var)
-        .map(|dir| dir.join("op"))
-        .find(|p| p.exists())
+    candidate_paths().into_iter().find(|p| p.is_file())
 }
 
 #[uniffi::export]
@@ -309,12 +328,12 @@ mod tests {
     #[test]
     fn extracts_fields_by_label_when_ids_differ() {
         let json = r#"{"fields":[
-          {"id":"custom1","label":"Username","value":"matt"},
+          {"id":"custom1","label":"Username","value":"demo"},
           {"id":"custom2","label":"Password","value":"pw"},
           {"id":"custom3","label":"Private Key","value":"KEY"}
         ]}"#;
         let s = extract_secret(json).unwrap();
-        assert_eq!(s.username.as_deref(), Some("matt"));
+        assert_eq!(s.username.as_deref(), Some("demo"));
         assert_eq!(s.password.as_deref(), Some("pw"));
         assert_eq!(s.private_key.as_deref(), Some("KEY"));
     }

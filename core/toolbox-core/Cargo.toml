@@ -2,21 +2,18 @@
 name = "toolbox-core"
 version = "0.1.0"
 edition = "2021"
-description = "Connection engine for Toolbox: SSH, RDP, VNC, vault and providers"
+description = "Connection engine for Toolbox: SSH, SFTP, FTP, VNC, vault and providers"
 license = "MIT"
 
 [lib]
 name = "toolbox_core"
-crate-type = ["cdylib", "staticlib", "rlib"]
+# cdylib for the app (C# loads toolbox_core.dll), rlib for tests and examples.
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
 required-features = ["cli"]
-
-[[example]]
-name = "rdp_server"
-required-features = ["test-support"]
 
 [[example]]
 name = "echo_server"
@@ -34,15 +31,11 @@ required-features = ["test-support"]
 name = "sftp"
 required-features = ["test-support"]
 
-[[test]]
-name = "rdp_session"
-required-features = ["test-support"]
-
 [features]
 default = []
 cli = ["uniffi/cli"]
-# In-process RDP server for tests and the `rdp_server` example.
-test-support = ["ironrdp/server", "ironrdp/acceptor", "dep:rcgen", "dep:async-trait", "dep:tempfile", "dep:libunftp", "dep:unftp-sbe-fs", "dep:unftp-core"]
+# In-process SSH/SFTP and FTP servers for tests and the examples.
+test-support = ["dep:rcgen", "dep:async-trait", "dep:tempfile", "dep:libunftp", "dep:unftp-sbe-fs", "dep:unftp-core"]
 
 [dependencies]
 uniffi = { version = "0.32", features = ["tokio"] }
@@ -59,13 +52,7 @@ chacha20poly1305 = "0.10"
 zeroize = "1"
 base64 = "0.22"
 rand = "0.10"
-# IronRDP is pinned to one git commit: the published crates come from two
-# release generations that cannot be mixed, and the server used by the tests
-# is not on crates.io yet.
-ironrdp = { git = "https://github.com/Devolutions/IronRDP", rev = "0a79fd2178c79b3d8920b6e76f2a9da5db6331ca", features = ["connector", "session", "graphics", "input", "svc", "dvc", "displaycontrol", "pdu", "core"] }
-ironrdp-tokio = { git = "https://github.com/Devolutions/IronRDP", rev = "0a79fd2178c79b3d8920b6e76f2a9da5db6331ca", features = ["reqwest-native-tls"] }
-ironrdp-tls = { git = "https://github.com/Devolutions/IronRDP", rev = "0a79fd2178c79b3d8920b6e76f2a9da5db6331ca", features = ["native-tls"] }
-x509-cert = { version = "0.3", default-features = false, features = ["std"] }
+# Self-signed certificates for the FTPS test server.
 rcgen = { version = "0.14", optional = true }
 tempfile = { version = "3", optional = true }
 async-trait = { version = "0.1", optional = true }

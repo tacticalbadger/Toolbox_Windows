@@ -190,7 +190,7 @@ struct Document {
     #[serde(default)]
     providers: Vec<Provider>,
     /// Folder paths that exist on their own, so an empty folder survives.
-    /// Slash-separated, e.g. `AAN/Jump Boxes`.
+    /// Slash-separated, e.g. `ACME/Jump Boxes`.
     #[serde(default)]
     folders: Vec<String>,
     /// Credential assigned to a folder, by path.
@@ -818,15 +818,23 @@ fn write_document(path: &Path, doc: &Document) -> Result<(), CoreError> {
 }
 
 /// Owner read/write only: the document names hosts and accounts.
+#[cfg(unix)]
 pub(crate) fn restrict_permissions(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
 }
 
+/// On Windows the files live under the user's profile (`%APPDATA%`), whose
+/// ACL already excludes other users; NTFS has no mode bits to tighten
+/// without rewriting the ACL, so nothing is done here.
+#[cfg(windows)]
+pub(crate) fn restrict_permissions(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     fn sample(name: &str) -> Connection {
         Connection {
@@ -988,7 +996,34 @@ mod tests {
     }
 
     /// Writes a fake `op` that answers `item list` and `item get` with canned JSON.
+    /// On Windows it is a batch file, which `std::process::Command` runs
+    /// through `cmd.exe`.
+    #[cfg(windows)]
     fn fake_op(dir: &Path) -> PathBuf {
+        let path = dir.join("op.cmd");
+        fs::write(
+            &path,
+            "@echo off\r\n\
+             echo %* >> \"%~dp0op.log\"\r\n\
+             if \"%1 %2\"==\"item list\" (\r\n\
+               echo [{\"id\":\"i1\",\"title\":\"nutanix1\",\"vault\":{\"name\":\"work\"},\"category\":\"LOGIN\",\"additional_information\":\"admin\"},\r\n\
+               echo {\"id\":\"i2\",\"title\":\"lab key\",\"vault\":{\"name\":\"work\"},\"category\":\"SSH_KEY\"}]\r\n\
+               exit /b 0\r\n\
+             )\r\n\
+             if \"%1 %2\"==\"item get\" (\r\n\
+               echo {\"id\":\"i1\",\"fields\":[{\"id\":\"username\",\"value\":\"admin\"},{\"id\":\"password\",\"value\":\"pw\"}]}\r\n\
+               exit /b 0\r\n\
+             )\r\n\
+             echo unexpected 1>&2\r\n\
+             exit /b 1\r\n",
+        )
+        .unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn fake_op(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
         let path = dir.join("op");
         fs::write(
             &path,
@@ -1043,7 +1078,9 @@ esac
         assert!(matches!(&login.kind, CredentialKind::OnePassword { item_id, account, .. }
             if item_id == "i1" && account.as_deref() == Some("work")));
 
-        let log = fs::read_to_string(dir.path().join("op.log")).unwrap();
+        // Windows quotes `--format=json` when it launches the batch file
+        // through cmd.exe; the quotes carry no meaning for this check.
+        let log = fs::read_to_string(dir.path().join("op.log")).unwrap().replace('"', "");
         assert!(log.contains("item list --format=json --account work --vault work"), "{log}");
         assert!(log.contains("--vault shared"), "{log}");
 
@@ -1058,39 +1095,39 @@ esac
     #[test]
     fn folders_are_explicit_and_follow_renames() {
         let (_dir, store) = open_temp();
-        assert_eq!(normalize_folder(" AAN / Jump Boxes /"), Some("AAN/Jump Boxes".into()));
+        assert_eq!(normalize_folder(" ACME / Jump Boxes /"), Some("ACME/Jump Boxes".into()));
         assert_eq!(normalize_folder(" / "), None);
 
-        store.add_folder("AAN/Jump Boxes".into()).unwrap();
-        assert_eq!(store.list_folders(), vec!["AAN", "AAN/Jump Boxes"]);
+        store.add_folder("ACME/Jump Boxes".into()).unwrap();
+        assert_eq!(store.list_folders(), vec!["ACME", "ACME/Jump Boxes"]);
 
         let mut c = sample("jump01");
-        c.folder = Some("AAN/Jump Boxes".into());
+        c.folder = Some("ACME/Jump Boxes".into());
         let c = store.upsert(c).unwrap();
         let provider = store
             .upsert_provider(Provider {
                 id: "ad".into(),
-                name: "AAN-AD".into(),
+                name: "ACME-AD".into(),
                 kind: ProviderKind::OnePassword { op_path: None, account: None, vaults: vec![] },
-                folder: "AAN/AAN-AD".into(),
+                folder: "ACME/ACME-AD".into(),
                 auto_refresh_minutes: 0,
                 last_sync_epoch: None,
                 last_status: None,
             })
             .unwrap();
         let mut generated = sample("dc01");
-        generated.folder = Some("AAN/AAN-AD/Domain Controllers".into());
+        generated.folder = Some("ACME/ACME-AD/Domain Controllers".into());
         generated.source = Some(provider.id.clone());
         let generated = store.upsert(generated).unwrap();
         // Generated folders are derived, not explicit.
-        assert_eq!(store.list_folders(), vec!["AAN", "AAN/Jump Boxes"]);
+        assert_eq!(store.list_folders(), vec!["ACME", "ACME/Jump Boxes"]);
 
         // Rename the top folder: everything underneath follows.
-        assert_eq!(store.rename_folder("AAN".into(), "Work".into()).unwrap(), "Work");
+        assert_eq!(store.rename_folder("ACME".into(), "Work".into()).unwrap(), "Work");
         assert_eq!(store.list_folders(), vec!["Work", "Work/Jump Boxes"]);
         assert_eq!(store.get(c.id.clone()).unwrap().folder.as_deref(), Some("Work/Jump Boxes"));
-        assert_eq!(store.get_provider("ad".into()).unwrap().folder, "Work/AAN-AD");
-        assert_eq!(store.get(generated.id.clone()).unwrap().folder.as_deref(), Some("Work/AAN-AD/Domain Controllers"));
+        assert_eq!(store.get_provider("ad".into()).unwrap().folder, "Work/ACME-AD");
+        assert_eq!(store.get(generated.id.clone()).unwrap().folder.as_deref(), Some("Work/ACME-AD/Domain Controllers"));
         assert!(matches!(store.rename_folder("Work".into(), "Work/Inner".into()), Err(CoreError::Invalid(_))));
 
         // Moving: manual items move, generated ones refuse, providers carry their output.
@@ -1098,8 +1135,8 @@ esac
         assert_eq!(store.get(c.id.clone()).unwrap().folder, None);
         assert!(matches!(store.move_connection(generated.id.clone(), None), Err(CoreError::Invalid(_))));
         store.move_provider("ad".into(), Some("Archive".into())).unwrap();
-        assert_eq!(store.get_provider("ad".into()).unwrap().folder, "Archive/AAN-AD");
-        assert_eq!(store.get(generated.id).unwrap().folder.as_deref(), Some("Archive/AAN-AD/Domain Controllers"));
+        assert_eq!(store.get_provider("ad".into()).unwrap().folder, "Archive/ACME-AD");
+        assert_eq!(store.get(generated.id).unwrap().folder.as_deref(), Some("Archive/ACME-AD/Domain Controllers"));
 
         // Deleting: only empty folders go.
         assert!(matches!(store.delete_folder("Archive".into()), Err(CoreError::Invalid(_))));
@@ -1126,25 +1163,25 @@ esac
         store.upsert_credential(sample_credential("admin")).unwrap();
         store.upsert_credential(sample_credential("user")).unwrap();
         assert!(matches!(
-            store.set_folder_credential("AAN".into(), Some("missing".into())),
+            store.set_folder_credential("ACME".into(), Some("missing".into())),
             Err(CoreError::Invalid(_))
         ));
-        store.set_folder_credential("AAN".into(), Some("admin".into())).unwrap();
-        store.set_folder_credential("AAN/Jump Boxes".into(), Some("user".into())).unwrap();
+        store.set_folder_credential("ACME".into(), Some("admin".into())).unwrap();
+        store.set_folder_credential("ACME/Jump Boxes".into(), Some("user".into())).unwrap();
 
         let nearest = |folder: &str| {
             store
                 .inherited_credential(Some(folder.into()))
                 .map(|f| (f.folder, f.credential_id))
         };
-        assert_eq!(nearest("AAN/Jump Boxes/Deep"), Some(("AAN/Jump Boxes".into(), "user".into())));
-        assert_eq!(nearest("AAN/Other"), Some(("AAN".into(), "admin".into())));
+        assert_eq!(nearest("ACME/Jump Boxes/Deep"), Some(("ACME/Jump Boxes".into(), "user".into())));
+        assert_eq!(nearest("ACME/Other"), Some(("ACME".into(), "admin".into())));
         assert_eq!(nearest("Elsewhere"), None);
         assert_eq!(store.inherited_credential(None), None);
-        assert_eq!(store.folders_using_credential("admin".into()), vec!["AAN"]);
+        assert_eq!(store.folders_using_credential("admin".into()), vec!["ACME"]);
 
         // Renames carry the assignment; deleting the credential clears it.
-        store.rename_folder("AAN".into(), "Work".into()).unwrap();
+        store.rename_folder("ACME".into(), "Work".into()).unwrap();
         assert_eq!(nearest("Work/Jump Boxes/Deep"), Some(("Work/Jump Boxes".into(), "user".into())));
         store.delete_credential("user".into()).unwrap();
         assert_eq!(nearest("Work/Jump Boxes/Deep"), Some(("Work".into(), "admin".into())));
@@ -1172,21 +1209,21 @@ esac
         let mut provider = store
             .upsert_provider(Provider {
                 id: "ad".into(),
-                name: "acme".into(),
+                name: "corp-ad".into(),
                 kind: ProviderKind::OnePassword { op_path: None, account: None, vaults: vec![] },
-                folder: "Work/acme".into(),
+                folder: "Work/corp-ad".into(),
                 auto_refresh_minutes: 0,
                 last_sync_epoch: None,
                 last_status: None,
             })
             .unwrap();
         let mut bind = sample_credential("ad#bind");
-        bind.folder = Some("Work/acme".into());
+        bind.folder = Some("Work/corp-ad".into());
         store.upsert_credential(bind).unwrap();
-        provider.folder = "Work/ACME-AD".into();
+        provider.folder = "Work/CORP.EXAMPLE".into();
         store.upsert_provider(provider).unwrap();
-        assert_eq!(store.get_credential("ad#bind".into()).unwrap().folder.as_deref(), Some("Work/ACME-AD"));
-        assert!(!store.list_folders().iter().any(|f| f.ends_with("acme")));
+        assert_eq!(store.get_credential("ad#bind".into()).unwrap().folder.as_deref(), Some("Work/CORP.EXAMPLE"));
+        assert!(!store.list_folders().iter().any(|f| f.ends_with("corp-ad")));
     }
 
     #[test]

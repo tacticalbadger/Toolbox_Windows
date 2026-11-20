@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Everything is local: no network, no inline script. xterm.js writes its
+     own style elements, hence 'unsafe-inline' for styles only. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'">
+<title>Toolbox terminal</title>
+<link rel="stylesheet" href="xterm/xterm.css">
+<link rel="stylesheet" href="terminal.css">
+</head>
+<body>
+<div id="terminal"></div>
+<script src="xterm/xterm.js"></script>
+<script src="xterm/addon-fit.js"></script>
+<script src="xterm/addon-web-links.js"></script>
+<script src="xterm/addon-webgl.js"></script>
+<script src="terminal.js"></script>
+</body>
+</html>

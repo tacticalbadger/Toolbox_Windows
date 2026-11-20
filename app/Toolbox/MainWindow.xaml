@@ -1,0 +1,138 @@
+<Window x:Class="Toolbox.MainWindow"
+        x:ClassModifier="internal"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sidebar="clr-namespace:Toolbox.Sidebar"
+        Title="Toolbox" Width="1280" Height="820" MinWidth="720" MinHeight="420"
+        WindowStartupLocation="CenterScreen">
+    <DockPanel>
+        <Menu DockPanel.Dock="Top" x:Name="MainMenu">
+            <MenuItem Header="_File" SubmenuOpened="OnMenuOpened">
+                <MenuItem Header="New _Workspace" InputGestureText="Ctrl+Shift+T" Click="OnNewWorkspace" />
+                <MenuItem Header="New _Connection…" InputGestureText="Ctrl+Shift+N" Click="OnNewConnection" />
+                <MenuItem Header="New C_redential…" Click="OnNewCredential" />
+                <MenuItem Header="New _Provider…" Click="OnNewProvider" />
+                <Separator />
+                <MenuItem x:Name="BrowseFilesItem" Header="_Browse Files" InputGestureText="Ctrl+Shift+F"
+                          Click="OnBrowseFiles" />
+                <Separator />
+                <MenuItem Header="_Sync Providers" InputGestureText="Ctrl+Shift+R" Click="OnSyncProviders" />
+                <Separator />
+                <MenuItem x:Name="ClosePaneItem" Header="Close _Pane" InputGestureText="Ctrl+Shift+W"
+                          Click="OnClosePane" />
+                <MenuItem Header="Close Wor_kspace" InputGestureText="Ctrl+Alt+W" Click="OnCloseWorkspace" />
+                <Separator />
+                <MenuItem Header="E_xit" InputGestureText="Alt+F4" Click="OnExit" />
+            </MenuItem>
+            <MenuItem Header="_View" SubmenuOpened="OnMenuOpened">
+                <MenuItem Header="Toggle _Sidebar" InputGestureText="Ctrl+Shift+B" Click="OnToggleSidebar" />
+                <MenuItem x:Name="ThemeMenu" Header="_Theme" />
+                <Separator />
+                <MenuItem Header="Make Text _Bigger" InputGestureText="Ctrl+=" Click="OnTextBigger" />
+                <MenuItem Header="Make Text S_maller" InputGestureText="Ctrl+-" Click="OnTextSmaller" />
+                <MenuItem Header="_Reset Text Size" InputGestureText="Ctrl+0" Click="OnTextReset" />
+            </MenuItem>
+            <MenuItem Header="_Pane" SubmenuOpened="OnMenuOpened">
+                <MenuItem Header="Split _Right" InputGestureText="Alt+Shift+=" Click="OnSplitRight" />
+                <MenuItem Header="Split _Down" InputGestureText="Alt+Shift+-" Click="OnSplitDown" />
+                <Separator />
+                <MenuItem x:Name="FocusNextItem" Header="Focus _Next Pane" InputGestureText="Ctrl+Shift+]"
+                          Click="OnFocusNext" />
+                <MenuItem x:Name="FocusPreviousItem" Header="Focus _Previous Pane" InputGestureText="Ctrl+Shift+["
+                          Click="OnFocusPrevious" />
+                <Separator />
+                <MenuItem x:Name="MoveToNewItem" Header="_Move Pane to New Workspace" InputGestureText="Ctrl+Shift+M"
+                          Click="OnMovePaneToNewWorkspace" />
+                <MenuItem x:Name="MoveToMenu" Header="Move Pane to _Workspace" />
+            </MenuItem>
+            <MenuItem Header="_Workspace">
+                <MenuItem Header="_Rename Workspace…" InputGestureText="Ctrl+Alt+R" Click="OnRenameWorkspace" />
+                <Separator />
+                <MenuItem Header="_Next Workspace" InputGestureText="Ctrl+Tab" Click="OnNextWorkspace" />
+                <MenuItem Header="_Previous Workspace" InputGestureText="Ctrl+Shift+Tab" Click="OnPreviousWorkspace" />
+            </MenuItem>
+            <MenuItem Header="V_ault" SubmenuOpened="OnMenuOpened">
+                <MenuItem x:Name="LockVaultItem" Header="_Lock Vault" Click="OnLockVault" />
+                <MenuItem x:Name="RequireAuthItem" Header="_Confirm It's You Before Unlocking"
+                          Click="OnToggleVaultAuth" />
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="_About Toolbox" Click="OnAbout" />
+            </MenuItem>
+        </Menu>
+
+        <Grid x:Name="Body">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="SidebarColumn" Width="290" MinWidth="220" MaxWidth="520" />
+                <ColumnDefinition x:Name="SplitterColumn" Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="420" />
+            </Grid.ColumnDefinitions>
+
+            <sidebar:SidebarView x:Name="Sidebar" Grid.Column="0" />
+
+            <GridSplitter x:Name="SidebarSplitter" Grid.Column="1" Width="5" Background="Transparent"
+                          HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeBehavior="PreviousAndNext"
+                          Focusable="False" DragCompleted="OnSidebarResized" />
+
+            <DockPanel Grid.Column="2">
+                <!-- Workspace tabs, with the pane actions at the far end. -->
+                <Grid DockPanel.Dock="Top" Height="38" Margin="0,0,6,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Style="{StaticResource ToolButton}" Click="OnToggleSidebar"
+                            ToolTip="Toggle sidebar (Ctrl+Shift+B)" Margin="0,4,4,0"
+                            AutomationProperties.AutomationId="ToggleSidebar" AutomationProperties.Name="Toggle sidebar">
+                        <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE90C;" />
+                    </Button>
+                    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Disabled"
+                                  HorizontalScrollBarVisibility="Hidden" Focusable="False">
+                        <StackPanel Orientation="Horizontal">
+                            <StackPanel x:Name="TabStrip" Orientation="Horizontal" />
+                            <Button Style="{StaticResource ToolButton}" Width="32" Click="OnNewWorkspace"
+                                    ToolTip="New workspace (Ctrl+Shift+T)" Margin="2,4,0,0"
+                                    AutomationProperties.AutomationId="NewWorkspace" AutomationProperties.Name="New workspace">
+                                <TextBlock Style="{StaticResource ToolGlyph}" FontSize="12" Text="&#xE710;" />
+                            </Button>
+                        </StackPanel>
+                    </ScrollViewer>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="8,4,0,0">
+                        <Button Style="{StaticResource ToolButton}" Click="OnNewConnection"
+                                ToolTip="New connection (Ctrl+Shift+N)"
+                                AutomationProperties.AutomationId="ToolNewConnection" AutomationProperties.Name="New connection">
+                            <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE710;" />
+                        </Button>
+                        <Button x:Name="BrowseFilesButton" Style="{StaticResource ToolButton}" Click="OnBrowseFiles"
+                                ToolTip="Browse files (Ctrl+Shift+F)"
+                                AutomationProperties.AutomationId="ToolBrowseFiles" AutomationProperties.Name="Browse files">
+                            <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE8B7;" />
+                        </Button>
+                        <Button Style="{StaticResource ToolButton}" Click="OnSplitRight"
+                                ToolTip="Split right (Alt+Shift+=)"
+                                AutomationProperties.AutomationId="ToolSplitRight" AutomationProperties.Name="Split right">
+                            <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE90D;" />
+                        </Button>
+                        <Button Style="{StaticResource ToolButton}" Click="OnSplitDown"
+                                ToolTip="Split down (Alt+Shift+-)"
+                                AutomationProperties.AutomationId="ToolSplitDown" AutomationProperties.Name="Split down">
+                            <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE90E;" />
+                        </Button>
+                        <Button x:Name="ClosePaneButton" Style="{StaticResource ToolButton}" Click="OnClosePane"
+                                ToolTip="Close pane (Ctrl+Shift+W)"
+                                AutomationProperties.AutomationId="ToolClosePane" AutomationProperties.Name="Close pane">
+                            <Grid>
+                                <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE922;" />
+                                <TextBlock Style="{StaticResource ToolGlyph}" FontSize="7" Text="&#xE711;" />
+                            </Grid>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Every workspace's panes stay loaded; only the selected one is visible. -->
+                <Grid x:Name="WorkspaceHost" Margin="0,2,6,6" />
+            </DockPanel>
+        </Grid>
+    </DockPanel>
+</Window>

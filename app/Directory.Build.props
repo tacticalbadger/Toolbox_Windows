@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <!-- The marketing version lives in the VERSION file at the repo root.
+         tools\build.ps1 passes the build number (the commit count). -->
+    <ToolboxVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\VERSION').Trim())</ToolboxVersion>
+    <ToolboxBuild Condition="'$(ToolboxBuild)' == ''">0</ToolboxBuild>
+    <Version>$(ToolboxVersion)</Version>
+    <FileVersion>$(ToolboxVersion).$(ToolboxBuild)</FileVersion>
+    <InformationalVersion>$(ToolboxVersion) (build $(ToolboxBuild))</InformationalVersion>
+    <Company>Toolbox</Company>
+    <Product>Toolbox</Product>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <!-- Keep the commit hash out of the product version string. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+</Project>

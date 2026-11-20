@@ -1,0 +1,17 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #000;
+}
+
+/* A little air between the text and the pane's edge. */
+#terminal {
+  position: absolute;
+  top: 4px;
+  right: 0;
+  bottom: 2px;
+  left: 6px;
+}

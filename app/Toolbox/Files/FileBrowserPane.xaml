@@ -1,0 +1,153 @@
+<UserControl x:Class="Toolbox.Files.FileBrowserPane"
+             x:ClassModifier="internal"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             AutomationProperties.AutomationId="FileBrowserPane">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </UserControl.Resources>
+    <DockPanel Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
+        <!-- Navigation and actions. The buttons wrap, so a narrow pane keeps all of them. -->
+        <WrapPanel DockPanel.Dock="Top" Margin="6,4,6,0">
+            <Button Style="{StaticResource ToolButton}" Width="32" Click="OnUp" ToolTip="Parent folder (Backspace)"
+                    IsEnabled="{Binding CanGoUp}" AutomationProperties.AutomationId="FilesUp" AutomationProperties.Name="Parent folder">
+                <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE74A;" />
+            </Button>
+            <Button Style="{StaticResource ToolButton}" Width="32" Click="OnHome" ToolTip="Home folder"
+                    IsEnabled="{Binding IsConnected}" AutomationProperties.AutomationId="FilesHome" AutomationProperties.Name="Home folder">
+                <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE80F;" />
+            </Button>
+            <Button Style="{StaticResource ToolButton}" Width="32" Click="OnRefresh" ToolTip="Refresh (F5)"
+                    IsEnabled="{Binding IsConnected}" AutomationProperties.AutomationId="FilesRefresh" AutomationProperties.Name="Refresh">
+                <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE72C;" />
+            </Button>
+            <Border Width="1" Height="18" Margin="6,0,6,0" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
+            <Button Style="{StaticResource ToolButton}" Width="32" Click="OnUpload" ToolTip="Upload files here"
+                    IsEnabled="{Binding IsConnected}" AutomationProperties.AutomationId="FilesUpload" AutomationProperties.Name="Upload">
+                <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE898;" />
+            </Button>
+            <Button x:Name="DownloadButton" Style="{StaticResource ToolButton}" Width="32" Click="OnDownload"
+                    ToolTip="Download selected files" IsEnabled="False"
+                    AutomationProperties.AutomationId="FilesDownload" AutomationProperties.Name="Download">
+                <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE896;" />
+            </Button>
+            <Button Style="{StaticResource ToolButton}" Width="32" Click="OnNewFolder" ToolTip="New folder"
+                    IsEnabled="{Binding IsConnected}" AutomationProperties.AutomationId="FilesNewFolder" AutomationProperties.Name="New folder">
+                <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE8F4;" />
+            </Button>
+            <Button x:Name="DeleteButton" Style="{StaticResource ToolButton}" Width="32" Click="OnDelete"
+                    ToolTip="Delete selected (Del)" IsEnabled="False"
+                    AutomationProperties.AutomationId="FilesDelete" AutomationProperties.Name="Delete">
+                <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE74D;" />
+            </Button>
+        </WrapPanel>
+        <DockPanel DockPanel.Dock="Top" Margin="8,2,8,6">
+            <ProgressBar DockPanel.Dock="Right" IsIndeterminate="True" Width="46" Height="3" Margin="8,0,0,0"
+                         VerticalAlignment="Center"
+                         Visibility="{Binding Busy, Converter={StaticResource BoolToVisibility}}" />
+            <TextBox x:Name="PathBox" VerticalAlignment="Center" KeyDown="OnPathKeyDown"
+                     FontFamily="Cascadia Mono, Consolas" IsEnabled="{Binding IsConnected}"
+                     AutomationProperties.AutomationId="FilesPath" AutomationProperties.Name="Path" />
+        </DockPanel>
+        <Border DockPanel.Dock="Top" Height="1" Background="{DynamicResource DividerStrokeColorDefaultBrush}" />
+
+        <!-- A problem with the last action, while connected -->
+        <TextBlock DockPanel.Dock="Bottom" Text="{Binding Status}" FontSize="12" Margin="10,4,10,5" TextWrapping="Wrap"
+                   Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                   AutomationProperties.AutomationId="FilesStatus"
+                   Visibility="{Binding ShowsError, Converter={StaticResource BoolToVisibility}}" />
+
+        <!-- Transfers in flight -->
+        <Border DockPanel.Dock="Bottom" BorderThickness="0,1,0,0" Padding="10,6,10,6"
+                BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+                Visibility="{Binding HasTransfers, Converter={StaticResource BoolToVisibility}}">
+            <StackPanel>
+                <ItemsControl ItemsSource="{Binding Transfers}" AutomationProperties.AutomationId="FilesTransfers">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <DockPanel Margin="0,2,0,2" LastChildFill="False">
+                                <TextBlock x:Name="Arrow" DockPanel.Dock="Left" Text="{Binding Glyph}" FontSize="13"
+                                           FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" Margin="8,0,10,0" MaxWidth="260"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                <ProgressBar DockPanel.Dock="Left" Width="160" Height="4" Minimum="0" Maximum="100"
+                                             Value="{Binding Percent, Mode=OneWay}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                             Visibility="{Binding IsRunning, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock x:Name="State" DockPanel.Dock="Left" Text="{Binding StatusText}" FontSize="12"
+                                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            </DockPanel>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding HasError}" Value="True">
+                                    <Setter TargetName="Arrow" Property="Foreground"
+                                            Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                                    <Setter TargetName="State" Property="Foreground"
+                                            Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Button Content="Clear finished" Click="OnClearFinished" HorizontalAlignment="Left" Margin="0,4,0,0"
+                        Padding="8,2,8,2" FontSize="12"
+                        Visibility="{Binding HasFinished, Converter={StaticResource BoolToVisibility}}" />
+            </StackPanel>
+        </Border>
+
+        <Grid>
+            <ListView x:Name="List" ItemsSource="{Binding Entries}" SelectionMode="Extended" BorderThickness="0"
+                      Background="Transparent" AutomationProperties.AutomationId="FilesList" AutomationProperties.Name="Files"
+                      SelectionChanged="OnSelectionChanged" MouseDoubleClick="OnDoubleClick" KeyDown="OnListKeyDown"
+                      ContextMenuOpening="OnContextMenuOpening"
+                      Visibility="{Binding IsConnected, Converter={StaticResource BoolToVisibility}}">
+                <ListView.ContextMenu>
+                    <ContextMenu x:Name="ListMenu" />
+                </ListView.ContextMenu>
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Name" Width="260">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock x:Name="Icon" Text="{Binding Glyph}" FontSize="15" Width="22"
+                                                   FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock Text="{Binding Name}" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <DataTemplate.Triggers>
+                                        <DataTrigger Binding="{Binding IsDir}" Value="True">
+                                            <Setter TargetName="Icon" Property="Foreground"
+                                                    Value="{DynamicResource AccentTextFillColorPrimaryBrush}" />
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Size" Width="90">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Size}" TextAlignment="Right"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Modified" Width="150">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Modified}"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+            <TextBlock Text="{Binding Placeholder}" TextAlignment="Center" TextWrapping="Wrap" Margin="24"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       AutomationProperties.AutomationId="FilesPlaceholder"
+                       Visibility="{Binding IsDisconnected, Converter={StaticResource BoolToVisibility}}" />
+        </Grid>
+    </DockPanel>
+</UserControl>

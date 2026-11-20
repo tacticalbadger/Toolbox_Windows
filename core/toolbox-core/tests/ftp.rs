@@ -24,7 +24,7 @@ fn config(port: u16, password: &str, secure: bool, accept_invalid: bool) -> FtpC
     FtpConfig {
         host: "127.0.0.1".into(),
         port,
-        username: "matt".into(),
+        username: "demo".into(),
         password: password.into(),
         secure,
         accept_invalid_certs: accept_invalid,
@@ -37,7 +37,7 @@ async fn server(tls: bool) -> (tempfile::TempDir, u16) {
     std::fs::create_dir(root.path().join("docs")).unwrap();
     std::fs::write(root.path().join("hello.txt"), b"hello over ftp\n").unwrap();
     let s = start(FtpTestServerConfig {
-        username: "matt".into(),
+        username: "demo".into(),
         password: "secret".into(),
         root: root.path().to_path_buf(),
         tls,

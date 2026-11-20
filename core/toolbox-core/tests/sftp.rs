@@ -28,7 +28,7 @@ fn config(addr: std::net::SocketAddr, known_hosts: &std::path::Path, password: &
     SshConfig {
         host: addr.ip().to_string(),
         port: addr.port(),
-        username: "matt".into(),
+        username: "demo".into(),
         auth: SshAuth::Password { password: password.into() },
         term: "xterm".into(),
         cols: 80,
@@ -49,7 +49,7 @@ async fn browse_transfer_and_manage_files() {
     let server = ssh_test_server::start(
         "127.0.0.1:0".parse().unwrap(),
         TestServerConfig {
-            username: "matt".into(),
+            username: "demo".into(),
             password: "secret".into(),
             sftp_root: root.path().to_path_buf(),
             host_key: None,
@@ -126,7 +126,7 @@ async fn wrong_password_is_an_auth_error() {
     let server = ssh_test_server::start(
         "127.0.0.1:0".parse().unwrap(),
         TestServerConfig {
-            username: "matt".into(),
+            username: "demo".into(),
             password: "secret".into(),
             sftp_root: root.path().to_path_buf(),
             host_key: None,

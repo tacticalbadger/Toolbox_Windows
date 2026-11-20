@@ -4,7 +4,7 @@
 //! listener, receives `on_connected`, then a stream of `on_data`, and finally
 //! `on_closed`. Writes and resizes are queued through the session handle.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -324,11 +324,9 @@ async fn authenticate_with_agent(
     user: &str,
     socket_path: Option<&str>,
 ) -> Result<AuthResult, CoreError> {
-    let mut agent = match socket_path {
-        Some(path) => AgentClient::connect_uds(expand_tilde(path)).await,
-        None => AgentClient::connect_env().await,
-    }
-    .map_err(|e| CoreError::Auth(format!("cannot reach ssh-agent: {e}")))?;
+    let mut agent = connect_agent(socket_path)
+        .await
+        .map_err(|e| CoreError::Auth(format!("cannot reach ssh-agent: {e}")))?;
 
     let identities = agent
         .request_identities()
@@ -486,10 +484,43 @@ fn describe_auth(auth: &SshAuth) -> String {
     }
 }
 
+/// Named pipe the Windows OpenSSH agent listens on; 1Password's SSH agent
+/// serves the same name, so one default covers both.
+#[cfg(windows)]
+pub const DEFAULT_AGENT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+
+/// Opens the agent at `socket_path`, or the platform default: `SSH_AUTH_SOCK`
+/// on Unix, the OpenSSH named pipe on Windows.
+#[cfg(unix)]
+async fn connect_agent(socket_path: Option<&str>) -> Result<AgentClient<tokio::net::UnixStream>, russh::keys::Error> {
+    match socket_path {
+        Some(path) => AgentClient::connect_uds(expand_tilde(path)).await,
+        None => AgentClient::connect_env().await,
+    }
+}
+
+#[cfg(windows)]
+async fn connect_agent(
+    socket_path: Option<&str>,
+) -> Result<AgentClient<tokio::net::windows::named_pipe::NamedPipeClient>, russh::keys::Error> {
+    let pipe = socket_path.map(|p| p.to_string()).unwrap_or_else(|| {
+        std::env::var("SSH_AUTH_SOCK")
+            .ok()
+            .filter(|s| s.starts_with(r"\\.\pipe\"))
+            .unwrap_or_else(|| DEFAULT_AGENT_PIPE.to_string())
+    });
+    AgentClient::connect_named_pipe(pipe).await
+}
+
+/// `~/x` relative to the home directory (`HOME`, or the profile folder on
+/// Windows); other paths unchanged. Windows users may also write `~\x`.
 pub(crate) fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return Path::new(&home).join(rest);
+    let rest = path
+        .strip_prefix("~/")
+        .or_else(|| if cfg!(windows) { path.strip_prefix("~\\") } else { None });
+    if let Some(rest) = rest {
+        if let Some(home) = std::env::home_dir() {
+            return home.join(rest);
         }
     }
     PathBuf::from(path)

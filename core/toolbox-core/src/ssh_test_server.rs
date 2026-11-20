@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::SocketAddr;
-use std::os::unix::fs::FileExt;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
@@ -336,9 +336,12 @@ impl russh_sftp::server::Handler for DirSftp {
     }
 
     async fn read(&mut self, id: u32, handle: String, offset: u64, len: u32) -> Result<Data, Self::Error> {
-        let file = self.files.get(&handle).ok_or(StatusCode::BadMessage)?;
+        // Seek then read instead of `read_at`: the handler owns the file and
+        // serves one request at a time, and this works on Windows too.
+        let mut file = self.files.get(&handle).ok_or(StatusCode::BadMessage)?;
         let mut buf = vec![0u8; len as usize];
-        let n = file.read_at(&mut buf, offset).map_err(|_| StatusCode::Failure)?;
+        file.seek(SeekFrom::Start(offset)).map_err(|_| StatusCode::Failure)?;
+        let n = file.read(&mut buf).map_err(|_| StatusCode::Failure)?;
         if n == 0 {
             return Err(StatusCode::Eof);
         }
@@ -347,8 +350,9 @@ impl russh_sftp::server::Handler for DirSftp {
     }
 
     async fn write(&mut self, id: u32, handle: String, offset: u64, data: Vec<u8>) -> Result<Status, Self::Error> {
-        let file = self.files.get(&handle).ok_or(StatusCode::BadMessage)?;
-        file.write_all_at(&data, offset).map_err(|_| StatusCode::Failure)?;
+        let mut file = self.files.get(&handle).ok_or(StatusCode::BadMessage)?;
+        file.seek(SeekFrom::Start(offset)).map_err(|_| StatusCode::Failure)?;
+        file.write_all(&data).map_err(|_| StatusCode::Failure)?;
         Ok(Self::ok(id))
     }
 

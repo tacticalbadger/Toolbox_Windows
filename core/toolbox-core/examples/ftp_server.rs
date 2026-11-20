@@ -2,7 +2,7 @@
 //!
 //!   cargo run --example ftp_server --features test-support -- [--port 2121] [--root DIR] [--tls]
 //!
-//! Login: matt / secret. Without --root a temporary folder with a few files is served.
+//! Login: demo / secret. Without --root a temporary folder with a few files is served.
 
 use std::path::PathBuf;
 
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     };
     let server = start(FtpTestServerConfig {
-        username: "matt".into(),
+        username: "demo".into(),
         password: "secret".into(),
         root: root.clone(),
         tls,
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     })
     .await?;
     println!(
-        "{} server listening on 127.0.0.1:{} (matt / secret), root {}",
+        "{} server listening on 127.0.0.1:{} (demo / secret), root {}",
         if tls { "FTPS (explicit)" } else { "FTP" },
         server.port,
         root.display()

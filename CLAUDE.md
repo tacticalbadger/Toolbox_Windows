@@ -7,201 +7,410 @@ before committing, so the commit describes itself).
 
 ## What this is
 
-Toolbox is a replacement for Termius + Royal TS for the owner (infra admin in
-a Windows/Active Directory shop; uses Termius, Royal TS/TSX and 1Password
-daily; prefers Rust). SSH terminals in tabbed workspaces with split panes,
-RDP and VNC with dynamic resolution, connection objects in a Royal-style
-folder tree, a credential vault, SSH key identities, and dynamic folders
-fed by 1Password (`op` CLI) and Active Directory. Royal TS reference
-material the owner provided is in `docs/royalts-reference/`. The owner's Royal layout
-to mirror: document "Work" → folder "AAN" → dynamic folders "1Password" and
-the AD provider (OU hierarchy), folder "Jump Boxes".
+Toolbox is a replacement for Termius + Royal TS for the owner (infra admin
+in a Windows/Active Directory shop; uses Termius, Royal TS/TSX and
+1Password daily; prefers Rust). SSH terminals in tabbed workspaces with
+split panes, RDP and VNC with dynamic resolution, connection objects in a
+Royal-style folder tree, a credential vault, SSH key identities, and
+dynamic folders fed by 1Password (`op` CLI) and Active Directory. Royal TS
+reference material the owner provided is in `docs/royalts-reference/`. The
+owner's Royal layout to mirror: document "Work" → folder "ACME" → dynamic
+folders "1Password" and the AD provider (OU hierarchy), folder "Jump
+Boxes".
 
 It began as a macOS app (Swift/AppKit shell over a Rust core, repo
-https://github.com/mattdobbs/Toolbox). On 2026-11-17 the owner decided to port
-it to Windows and retire the Mac app. This repo
-(https://github.com/mattdobbs/Toolbox_Windows.git) is the Windows app.
-**One branch: `main`.** Commit and push to `main` directly; no feature
-branches unless the owner asks. Commit only when the owner asks.
+https://github.com/mattdobbs/Toolbox, public since 2026-11-19 with its
+history rewritten). On 2026-11-17 the owner decided to port it to Windows.
+This repo (https://github.com/mattdobbs/Toolbox_Windows.git, private) is
+the Windows app. **One branch: `main`.** Commit and push to `main`
+directly; no feature branches unless the owner asks. Commit only when the
+owner asks.
 
-**The Mac app is the behavioural reference.** It was imported whole in
-commit `e2d77a4` and removed in the next commit. To read it:
-`git show e2d77a4:App/Sources/Workspace/PaneView.swift`, or
-`git ls-tree -r --name-only e2d77a4 App/` for the file list. The Swift
-tree: `App/Sources/App/` (delegate, menu), `Workspace/` (window =
-workspace tab, pane container, `PaneView`, `PaneLayout`), `Terminal/`
-(SwiftTerm), `Remote/` (RDP, VNC), `Files/` (SFTP browser), `Sidebar/`
-(tree + editors), `Model/` (AppModel, VaultManager, CredentialResolver,
-ProviderSync). The old `README.md` at that commit lists "What works",
-which is the parity checklist for the port.
+**The Mac app is the behavioural reference, and the goal is feature
+parity** (owner, 2026-11-19). Two places to read it:
+- Commit `e2d77a4` in this repo is a snapshot from 2026-11-16:
+  `git show e2d77a4:App/Sources/Workspace/PaneView.swift`,
+  `git ls-tree -r --name-only e2d77a4 App/`.
+- The Mac repo itself has moved on since (RDP sizing fix, release
+  pipeline, identifier scrub). Clone it somewhere outside this repo to
+  compare; do not add it as a remote here. Its README "What works" is the
+  parity checklist; its `core/` is the same crate minus the Windows
+  changes.
 
-## Decisions (the owner, 2026-11-17 and 2026-11-18)
+Swift tree → C# tree: `App/` (delegate, menu) → `App.xaml.cs`,
+`MainWindow*.cs`; `Workspace/` → `Workspaces/`; `Terminal/` → `Terminal/`;
+`Remote/` → `Remote/`; `Files/` → `Files/`; `Sidebar/` → `Sidebar/`;
+`Model/` → `Model/`.
+
+## Decisions (owner, 2026-11-17 and 2026-11-18, unless marked)
 
 - **Shell: WPF on .NET 10 (LTS), C#.** A thin native shell over the Rust
-  core, the same shape as the Mac build. The owner chose ".NET 8" on the menu;
-  .NET 8 left support on 2026-11-10, so the current LTS is used. Bindings
-  come from `uniffi-bindgen-cs` (NordSecurity; v0.12.0 targets UniFFI
-  0.32.0), so the core keeps UniFFI 0.32. Rejected: Tauri (no mstscax, web
-  look), WinUI 3 (cannot host mstscax cleanly), pure-Rust GUIs (no
-  terminal or tree widgets worth having).
+  core, the same shape as the Mac build. Bindings come from
+  `uniffi-bindgen-cs` (NordSecurity; v0.12.0 targets UniFFI 0.32.0), so
+  the core keeps UniFFI 0.32. Rejected: Tauri (no mstscax, web look),
+  WinUI 3 (cannot host mstscax cleanly), pure-Rust GUIs.
 - **RDP: Microsoft's `mstscax` ActiveX control** hosted through
-  `WindowsFormsHost`, as Royal TS does. Clipboard, audio, drive and printer
-  redirection, RD Gateway, CredSSP and smart cards come with it. `rdp.rs`,
-  the RDP test server and the IronRDP dependency leave the build.
+  `WindowsFormsHost`, as Royal TS does. `rdp.rs`, the RDP test server and
+  IronRDP left the build.
 - **VNC: a Rust VNC crate inside the core** (chosen over the C#
   MarcusW.VncClient to keep protocol code in Rust; the Rust VNC ecosystem
-  is thin, expect to patch a crate). Frames cross the FFI into a WPF
-  `WriteableBitmap`.
-- **Terminal: xterm.js inside WebView2.** No native WPF terminal control
-  exists. (Claude's choice, not contested.)
+  is thin, expect to patch a crate, and macOS hosts need Apple's ARD
+  authentication). Frames cross the FFI into a WPF `WriteableBitmap`.
+  **Not started.**
+- **Terminal: xterm.js inside WebView2.** (Claude's choice, not contested.)
 - **Vault key: DPAPI; owner check: Windows Hello.** The 32-byte key is a
-  per-user DPAPI blob next to the vault; Windows Hello
-  (`UserConsentVerifier`) replaces Touch ID with the same "require
-  authentication" toggle. No code-signing dependence.
+  per-user DPAPI blob next to the vault. **Claude added a fallback on
+  2026-11-19, flagged to the owner, not yet confirmed:** where Hello is not
+  set up (the dev machine), the Windows Security dialog asks for the
+  account password and Windows verifies it, as the Mac build falls back to
+  the login password. See the security review addendum of that date.
 - **Audience: the owner plus coworkers soon.** x64 and ARM64 builds, an
   installer (MSIX or Inno Setup, not yet chosen) and a code-signing
-  certificate are in scope.
+  certificate are in scope. Since 2026-11-19 there are unsigned,
+  self-contained zips for both architectures on the repo's Releases page
+  (owner asked for a release that day); installer and certificate are not
+  started.
 - **Data: start fresh on Windows.** Nothing migrated from the Mac.
-- **Repo: the Mac tree was imported once and deleted**, see above.
-- Paths (Claude's choices): app data in
-  `%APPDATA%\Toolbox\{connections.json,vault.json,vault.key}`;
-  `known_hosts` shared with Windows OpenSSH at
-  `%USERPROFILE%\.ssh\known_hosts`; SSH agent is the named pipe
-  `\\.\pipe\openssh-ssh-agent` (1Password's agent serves the same pipe);
-  `op.exe` looked up on `PATH`, `%LOCALAPPDATA%\Microsoft\WinGet\Links`
-  and `C:\Program Files\1Password CLI`; scripts in PowerShell.
+- Claude's choices, open to change: one window with a shared sidebar and
+  workspaces as tabs inside it (Windows has no native window tabs);
+  closing the last workspace leaves a fresh one; app shortcuts on
+  Ctrl+Shift / Alt+Shift (README has the table) because Ctrl+letter
+  belongs to the terminal; RDP certificate problems show the standard
+  Windows warning; drives and printers are not redirected; `VERSION` file
+  at 0.1.0.
+- Paths: app data in
+  `%APPDATA%\Toolbox\{connections.json,vault.json,vault.key,settings.json}`;
+  log and WebView2 profile in `%LOCALAPPDATA%\Toolbox`; `known_hosts`
+  shared with Windows OpenSSH at `%USERPROFILE%\.ssh\known_hosts`; SSH
+  agent is the named pipe `\\.\pipe\openssh-ssh-agent` (1Password's agent
+  serves the same pipe); `op.exe` looked up on `PATH`,
+  `%LOCALAPPDATA%\Microsoft\WinGet\Links` and
+  `C:\Program Files\1Password CLI`; scripts in PowerShell.
 
-## Planned layout
+## Layout
 
 - `core/toolbox-core/` — Rust core (edition 2021, UniFFI 0.32): `ssh.rs`
   (russh), `sftp.rs` (russh-sftp), `vault.rs` (XChaCha20-Poly1305),
   `onepassword.rs` (`op` subprocess), `ad.rs` (ldap3), `ftp.rs` (FTP /
   explicit FTPS via suppaftp), `store.rs` (connections/credentials/
-  providers/folders JSON document), `error.rs`; `rdp.rs` to be removed,
-  `vnc.rs` to be added. Test servers behind the `test-support` feature:
-  `ssh_test_server.rs`, `ftp_test_server.rs` (libunftp); examples
-  `echo_server` (SSH+SFTP :2222) and `ftp_server` (`--port`, `--tls`),
-  all matt/secret.
-- `app/` — C# WPF solution (to be created): `Toolbox.sln`, the WPF
-  project, `Generated/` for the UniFFI C# bindings (gitignored).
-- `tools/` — PowerShell: `build.ps1` (core → bindings + DLL, app, test,
-  package) and the e2e harness (fixture, test servers, launch, capture)
-  re-created from the Mac one.
-- `docs/` — `SECURITY-REVIEW.md` (add an addendum per security-relevant
-  change; the vault and agent changes need one), Royal TS reference.
+  providers/folders JSON document), `display.rs` (`rdp_desktop_size`),
+  `error.rs`; `vnc.rs` to be added. Test servers behind the `test-support`
+  feature: `ssh_test_server.rs`, `ftp_test_server.rs` (libunftp); examples
+  `echo_server` (SSH+SFTP :2222) and `ftp_server` (`--port`, `--tls`), all
+  demo/secret. `uniffi.toml` names the C# namespace (`Toolbox.Core`) and
+  the class for free functions (`CoreApi`).
+- `app/Toolbox/` — the WPF project (`net10.0-windows10.0.22621.0`, WPF +
+  Windows Forms for the ActiveX host, Fluent theme via `ThemeMode`).
+  `App.xaml(.cs)` startup and launch arguments; `MainWindow.xaml(.cs)`
+  menus, tab row, workspaces, shortcuts; `MainWindow.Sessions.cs` opening
+  sessions, editor and folder actions, testing aids. `Workspaces/`
+  (`PaneTree` + `PaneLayout`, `PaneContainer`, `PaneView`, `Workspace`,
+  `DragController`, `IPaneContent`), `Terminal/` (`TerminalPane`,
+  `Theme`), `Files/` (`FileBrowserPane`, `FileBrowserModel`), `Remote/`
+  (`RdpPane`, `RdpClientHost`), `Sidebar/` (`SidebarView`, `SidebarNode`,
+  the four editors, `FormBuilder`), `Model/` (`AppModel`, `VaultManager`,
+  `OwnerCheck`, `CredentialResolver`, `ProviderSync`, the drafts),
+  `Support/` (`AppPaths`, `AppSettings`, `Log`, `Prompts`, `Icons`),
+  `Assets/Terminal/` (the terminal page; `xterm/` is fetched).
+  `app/Generated/` and `app/runtimes/` come from the core build;
+  `app/nuget.config` pins nuget.org.
+- `tools/build.ps1` — targets `core`, `assets`, `app`, `test`, `run`,
+  `package`, `clean`. `tools/publish.ps1` — GitHub Release from the
+  packages (the counterpart of the Mac's `make publish`). `tools/e2e/` —
+  `make-fixture.ps1`, `servers.ps1`, `launch.ps1`, `capture.ps1`,
+  `ui.ps1` (UI Automation and synthetic input).
+- `VERSION` holds the marketing version; the build number is the commit
+  count (`FileVersion` 0.1.0.N, shown in Help ▸ About and the log's first
+  line).
+- `docs/` — `SECURITY-REVIEW.md` (an addendum per security-relevant
+  change), `release-notes/<version>.md` (the "In this version" bullets of
+  a release; written for teammates, no personal details), Royal TS
+  reference.
 
 ## Dev machine and toolchain
 
-The owner's Windows machine is **Windows 11 Pro on ARM64** (Rust host
-`aarch64-pc-windows-msvc`; winget pulls arm64 installers). Installed
-2026-11-17 via winget: Git 2.56 (`C:\Program Files\Git\bin`), rustup with
-stable 1.100 (`%USERPROFILE%\.cargo\bin`), Visual Studio 2022 Build Tools
-17.14 with the C++ workload (MSVC 14.44, ARM64 and x64 compilers, Windows
-SDK 10.0.26100), .NET SDK 10.0.404 (`C:\Program Files\dotnet`),
-`uniffi-bindgen-cs` from tag `v0.12.0+v0.32.0`, LLVM 23
-(`C:\Program Files\LLVM\bin`) and CMake 4.4 (`C:\Program Files\CMake\bin`).
-**clang and cmake are mandatory on ARM64**: the `aws-lc-sys` crate behind
-russh and rustls, and `ring` behind rcgen, fail their build scripts
-without them. WebView2 runtime ships with Windows 11. The user account is
-not an administrator (installers raise UAC).
+Windows 11 Pro on **ARM64** (Rust host `aarch64-pc-windows-msvc`),
+domain-joined, **200 % display scaling**, the account is not an
+administrator. Installed 2026-11-17 via winget: Git 2.56, rustup with
+stable 1.100, Visual Studio 2022 Build Tools 17.14 with the C++ workload,
+.NET SDK 10.0.404, `uniffi-bindgen-cs` from tag `v0.12.0+v0.32.0`, LLVM 23
+and CMake 4.4. **clang and cmake are mandatory on ARM64** (`aws-lc-sys`,
+`ring`). WebView2 runtime ships with Windows 11. Not installed: Node
+(xterm.js is fetched by `build.ps1`), `gh`, PowerShell 7, cargo-audit,
+1Password CLI.
 
-Shell notes: the Claude harness runs Windows PowerShell 5.1 (`&&` is a
-parse error) and Git Bash. A shell opened before an install does not see
-new PATH entries; use full paths until relaunched. For x64 builds add the
-`x86_64-pc-windows-msvc` Rust target and the .NET `win-x64` runtime
-identifier.
+Things that bite on this machine:
+- `C:\Program Files\LLVM\bin` is not on PATH; `build.ps1` and
+  `servers.ps1` add it. For a bare `cargo` call, add it yourself.
+- The user's NuGet config has no package sources; `app/nuget.config`
+  supplies nuget.org.
+- **Windows Hello is not set up** (`UserConsentVerifier` reports
+  DeviceNotPresent), so the owner check always takes the password path
+  here and the Hello path has never run.
+- The harness runs Windows PowerShell 5.1 (`&&` is a parse error) and Git
+  Bash. Keep scripts ASCII: 5.1 reads BOM-less files as ANSI. `2>&1` on a
+  native command turns stderr lines into error records.
+- **Never pipe the output of something that leaves a process running**
+  unless that process was started through the shell: a child started with
+  inherited handles keeps the pipe open and the caller hangs until it
+  exits. `launch.ps1` and `servers.ps1` start their processes with
+  `UseShellExecute` for this reason.
+- Bash `cd` and PowerShell `Set-Location` persist in the harness; use
+  absolute paths.
 
-## Everyday commands (until build.ps1 exists)
+## Everyday commands
 
 ```powershell
-cd core\toolbox-core
-cargo check --features test-support      # needs clang + cmake on PATH
-cargo test  --features test-support
-cargo clippy --features test-support
+tools\build.ps1                 # core + assets + app (first run restores packages and fetches xterm.js)
+tools\build.ps1 app -Restart    # rebuild the app, close the running build, start the new one
+tools\build.ps1 test            # cargo test --features test-support
+tools\build.ps1 run
+cd core; cargo clippy --features test-support --all-targets     # needs clang + cmake on PATH
 ```
 
-## Core port status
+Run `core` after ANY Rust API change (bindings and DLL are generated).
+After every app build, relaunch the app and tell the owner which build is
+running; they once tested a stale instance and reported a missing feature.
 
-`cargo check --features test-support` on Windows (2026-11-17): every
-third-party crate compiles; exactly seven errors, all in our code:
-`store.rs restrict_permissions` (`std::os::unix`, `from_mode`) and its
-test; `ssh_test_server.rs` `FileExt` (`read_at`/`write_all_at`; use
-`std::os::windows::fs::FileExt::seek_read`/`seek_write`); `ssh.rs`
-agent auth uses `AgentClient::connect_uds`/`connect_env`, which do not
-exist on Windows (russh has a named-pipe client under `cfg(windows)`).
-Compiles but wrong on Windows: `ssh.rs expand_tilde` reads `HOME` (use
-`USERPROFILE`), `onepassword.rs CANDIDATE_PATHS` are Homebrew paths.
+Release flow (the order matters: the build number is the commit count and
+`publish.ps1` checks it against the current commit):
+
+```powershell
+# bump VERSION if needed, add docs\release-notes\<version>.md, update Current state
+git commit ...; git push origin main
+tools\build.ps1 core assets package            # win-arm64 zip
+tools\build.ps1 core package -Arch x64         # win-x64 zip (cross-compiled; runs here under emulation)
+tools\e2e\launch.ps1 -Exe build\release\Toolbox-<version>-win-x64\Toolbox.exe --connect echo   # test what ships
+tools\publish.ps1 -DryRun                      # then without -DryRun
+```
+
+## End-to-end checks (no real hosts needed)
+
+```powershell
+tools\e2e\make-fixture.ps1            # keys, known_hosts, fake op.cmd, store, settings -> build\e2e
+tools\e2e\servers.ps1 start           # SSH+SFTP :2222, FTP :2121, FTPS :2122 (-ExitAfter 6 for auto-close)
+tools\e2e\launch.ps1 --connect echo --connect echo-1p     # relaunch against the fixture
+tools\e2e\capture.ps1                 # PNG of every Toolbox window (and Windows Security dialogs) -> build\e2e\shots
+tools\e2e\ui.ps1 tree                 # also: find, invoke, expand, select, setvalue, click, clickat, drag, keys, text
+tools\e2e\servers.ps1 stop
+```
+
+Fixture ids: `echo` (key file, folder Jump Boxes), `echo-1p` (1Password
+credential through the fake `op.cmd`), `echo-folder` (folder credential →
+prompts as `folderuser`, which the echo server rejects: the failure case),
+`rdp-local` (127.0.0.1:3390), `vnc-local`, File Transfer connections
+`sftp-local`, `ftp-local`, `ftps-local` (self-signed, so it prompts), plus
+AD-style generated connections under `ACME/CORP-AD/…`. The fixture has its
+own vault, vault key, log (`build\e2e\toolbox.log`) and settings with the
+owner check off; `make-fixture.ps1` resets them.
+
+How things are checked: assertions go through the log (`ssh: connected`,
+`layout: …`, `vault: …`, `prompt answered: …`) and the automation tree
+(`ui.ps1 find -Id RdpStatus`); screenshots are for looks. Automation ids:
+`SidebarTree` items are `conn:<id>`, `all-conn:<id>`, `cred:<id>`,
+`folder:<path>`, `prov:<id>`; prompts `PromptTitle`, `PromptInput`,
+`PromptOk`, `PromptCancel`; editors `EditorSave`, `EditorCancel`,
+`Validation`, fields by property name (`Name`, `Host`, `AuthMethod`,
+`FamilyRdp`…); toolbar `ToolSplitRight` etc.; file browser `Files…`.
+`invoke`/`setvalue`/`select` touch neither mouse nor keyboard; `click`,
+`drag`, `keys`, `text` are real input on the owner's desktop. System file
+dialogs do not answer to patterns: click the field, `text`, then
+`keys '{ENTER}'` (the folder picker also needs `click -Name 'Select
+Folder'`). Drop-downs: `click -Id …` then `keys '{DOWN}{ENTER}'`.
+
+**RDP needs a server.** None is in this repo. On 2026-11-19 the Mac repo's
+`rdp_test_server.rs` was copied into a scratch crate outside the repo
+(`ironrdp` at the Mac repo's pinned revision with `server`, `acceptor`,
+`displaycontrol`; `rcgen`, `tempfile`, `async-trait`, `tokio`), built
+(about six minutes) and run on :3390 (demo / secret, self-signed, so the
+certificate warning appears first). It does not sign out, so the
+clean-end path of RDP is untested.
 
 ## Conventions
 
-- Commit messages end with the co-author line for the Claude model doing
-  the work, e.g. `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
+- Commit only when the owner asks, on `main`. Commit messages end with
+  the co-author line for the Claude model doing the work.
 - Before committing: scan the diff for keys/tokens, make sure no temporary
-  probe code is left, run the Rust tests, and update **Current state**.
-  Never commit `core/target/`, `build/`, `app/**/bin|obj`, generated
-  bindings or native library copies; binaries are not shared through git.
-- Keep `README.md` and `docs/SECURITY-REVIEW.md` current.
+  probe code is left, run `tools\build.ps1 test`, and update **Current
+  state**. Never commit `core/target/`, `build/`, `app/**/bin|obj`,
+  `app/Generated/`, `app/runtimes/` or `app/Toolbox/Assets/Terminal/xterm/`.
+- **Nothing of the owner's own setup goes in git** (the Mac repo's rule
+  since its scrub, applied here from 2026-11-19): no real hostnames,
+  domain names, usernames, account emails or employer. Use
+  `corp.example`, `CORP\jdoe`, `ACME`, demo/secret in docs, tests and
+  fixtures, and write "the owner" in these notes. The two commits already
+  in this repo predate the rule (see Current state).
+- Keep `README.md` ("What works", "Not there yet") and
+  `docs/SECURITY-REVIEW.md` current.
 - Secrets never go in `connections.json`; they live in the vault,
   1Password, or are prompted for. New store fields need `#[serde(default)]`.
-- Scripts are PowerShell (`.ps1`, CRLF per `.gitattributes`); everything
-  else is LF.
-- After every app build, relaunch the app and tell the owner which build is
-  running; he once tested a stale instance and reported a missing feature.
+- Scripts are PowerShell (`.ps1`, CRLF per `.gitattributes`, ASCII);
+  everything else is LF.
 
-## Invariants and gotchas carried over from the Mac (each cost real time)
+## Invariants and gotchas (each cost real time)
 
+Carried over from the Mac:
 - The echo test server must skip SFTP channels or it echoes SFTP INIT bytes.
 - Session end: `SshListener.on_closed(clean)`; a pane auto-closes 0.7 s
   after a clean end only. Failures keep the pane with the message.
 - `AuthKind` variants: `Password`, `KeyFile`, `Agent`, `Credential`,
   `StoredPassword` (secret in the vault under the connection id),
-  `FolderCredential` (nearest folder's assignment; store keeps a path →
-  credential map). Credential-based methods take the credential's username.
+  `FolderCredential` (nearest folder's assignment). Credential-based
+  methods take the credential's username.
 - `ConnectionKind`: `Ssh`, `Rdp`, `Vnc`, and File Transfer kinds `Sftp`,
-  `Ftp`, `Ftps` (explicit `AUTH TLS`). File Transfer connections open the
-  file browser, which talks to either `SftpSession` or `FtpSession`
-  through one interface; the two core objects must keep identical method
-  signatures. `usesSsh` (ssh, sftp) decides key/agent auth; FTP uses
-  username + password unsplit.
+  `Ftp`, `Ftps`. The file browser talks to `SftpSession` or `FtpSession`
+  through `IFileTransferSession`; the two core objects must keep identical
+  method signatures. `UsesSsh` (ssh, sftp) decides key/agent auth; FTP
+  uses username + password unsplit.
 - AD provider accounts typed into the provider are vault credentials with
   id `<providerId>#bind|admin|user`, folder = the provider's folder, tag
   `provider-account`. Saving a provider writes them before the provider
   and deletes ones no longer used; deleting the provider deletes them.
-  Renaming a provider moves everything inside its folder.
-- Every DC in the AD domain used for testing presents a 1024-bit RSA LDAPS
-  certificate (checked 2026-11-16); macOS refused those and SChannel on
-  Windows likely will too, so verified LDAPS cannot work there until the
-  AD team reissues them. The working provider uses "Accept untrusted
-  certificates". The owner's real setup: `op` account `work`, vault `work`; AD
-  binds with his regular domain account.
-- Anything that removes a pane must fix the focused-pane id first, before
-  layout callbacks fire (the Mac shell crashed on this once).
-- Regenerate the bindings after any Rust signature change; the C# bindings
-  are generated, not hand-edited.
+- Every DC in the AD domain used for testing presents a 1024-bit RSA
+  LDAPS certificate (checked from the Mac 2026-11-16); verified LDAPS
+  cannot work there until they are reissued. The working provider uses
+  "Accept untrusted certificates".
+- Anything that removes a pane must fix the focused-pane id first
+  (`PaneContainer.ClosePane` does; `FocusedPane` repairs stale focus).
+- RDP desktop sizes go through `rdp_desktop_size` in the core (edges
+  200…8192, height even, width a multiple of 4).
+
+Found on Windows:
+- **Static field order.** C# initialises static fields in file order.
+  `AppSettings.Shared = Load()` ran before the JSON options below it
+  existed, so settings were silently never read back. Anything a static
+  initialiser needs goes above it.
+- **Airspace.** The terminal (WebView2, another process) and the RDP
+  control are native windows: nothing of WPF draws over them and their
+  mouse input never reaches WPF. Hence: panes are direct children of
+  `PaneContainer`, positioned from the tree (a layout change never
+  re-parents a session); the drop highlight is its own click-through
+  window; drags use mouse capture, not OLE drag and drop; clicks in the
+  RDP control are seen in `ComponentDispatcher.ThreadFilterMessage`, and
+  the terminal page reports its own focus; the RDP host is only visible
+  while a session is up, because status text cannot overlay it.
+- A drag source must capture the mouse on button-down. The pane header is
+  26 px high; without capture a quick drag leaves it before it counts.
+- WebView2 raises accelerator keys (Ctrl/Alt combinations) to WPF before
+  the page sees them, so window-level `KeyBinding`s work with a terminal
+  focused. Plain Ctrl+letter must stay unbound.
+- A `ComboBox` loses its selection when its `ItemsSource` is replaced and
+  writes null back through a two-way binding. The connection editor's
+  Method drop-down is wired by hand in `Refresh` for that reason; draft
+  choice lists are fixed instances.
+- A `ListView` in `GridView` mode with an `ItemContainerStyle` based on
+  the plain `ListViewItem` style loses its columns under the Fluent theme
+  (rows show `ToString()`). Do not set one.
+- uniffi-bindgen-cs must run from inside the crate folder (it calls
+  `cargo metadata`). Generated enums with data are nested records
+  (`AuthKind.Credential`), so those names shadow the top-level records
+  inside the enum type only.
+- mstscax: use `MsRdpClient9NotSafeForScripting`
+  (`8B918B82-7985-4C24-89DF-C33AD2BBFBCD`) through `dynamic`; events
+  through `AxHost.ConnectionPointCookie` and a public `[ComVisible]` sink
+  for the dispatch interface `336D5562-EFA8-482E-8CB3-C5C0FC7A7DB6`. The
+  IronRDP test server never raises `OnLoginComplete`, and
+  `OnRemoteDesktopSizeChange` is how the real size is learned. Ask for a
+  new size only when the pane's wanted size differs from the last size
+  asked for, or a server that answers with another size is asked forever.
+- mstscax paints its waiting screen white whatever colours the host has,
+  so `RdpPane` keeps the host `Hidden` (laid out, not shown) until
+  `OnConnected` and shows its own status text meanwhile.
+- The x64 core cross-compiles from ARM64 with the installed MSVC tools;
+  `aws-lc-sys` wants NASM for x64 and `build.ps1` sets
+  `AWS_LC_SYS_PREBUILT_NASM=1` when there is none. An x64 build runs on
+  this machine under emulation only when self-contained (no x64 .NET
+  runtime is installed), which is what `package` produces.
+- The virtual host for the terminal page is under `.example`; other
+  made-up names can cost a DNS lookup on every load.
+- `e2e\ui.ps1` must not tap Alt to get the foreground: it opens the menu
+  bar and eats the next key.
 
 ## Not verified against real infrastructure
 
-A real Windows RDP host, a real VNC server, an AD domain controller from
-this machine, Windows Hello, and distribution to coworkers.
+A real Windows RDP host (sign-out detection, CredSSP against a domain,
+clipboard), a real SSH host with the Windows agent or 1Password's agent
+(the `ssh-agent` service is disabled here), the real `op.exe`, an AD
+domain controller from this machine, Windows Hello, completing the
+password owner check, an encrypted key file's passphrase prompt, private
+keys from the vault, the x64 build on x64 hardware (it has run under
+emulation here), and a coworker actually installing a release.
+
+## Parity with the Mac app
+
+Done and exercised against the local test servers on 2026-11-19: tabbed
+workspaces, split panes with kept divider ratios, pane and sidebar drag
+and drop, move pane to a workspace, automatic close after a clean end,
+SSH terminals with themes and text size, SFTP/FTP/FTPS browser (list,
+new folder, upload, download, untrusted-certificate prompt), RDP with
+dynamic resolution, sidebar tree with filter, the four editors, folder
+credentials, stored passwords, vault on DPAPI with the owner check,
+1Password provider sync through a fake `op`, provider-owned accounts,
+launch arguments, build script, harness.
+
+Missing, in suggested order:
+1. **VNC** (`vnc.rs` in the core + a test server + `VncPane`).
+2. Code signing and an installer. Zips and `publish.ps1` exist (the Mac
+   side has Developer ID signing, notarization and a DMG); without a
+   certificate every recipient gets the SmartScreen warning. The x64
+   package has only run under emulation on the ARM64 dev machine.
+3. App icon (`.ico` from the Mac drawing in `bridge/make-icon.swift` at
+   `e2d77a4`).
+4. Sidebar multi-selection (the Mac deletes and drags several at once).
+5. A `Toolbox.Tests` project (`PaneTree`, `PaneLayout`, the drafts,
+   `CredentialResolver.Split`); `build.ps1 test` already runs it if it
+   exists.
+6. Smaller: File menu wording says "Browse Files" (Mac: "Browse Files
+   (SFTP)"); file rename/delete from the browser were not driven by a
+   test; sidebar rows do not ellipsize long detail text; terminal output
+   has no back-pressure for very fast producers; OSC 52 clipboard writes
+   are not supported (the Mac allows them).
 
 ## Ideas not started
 
 Session restore (workspaces + layouts), broadcast input, jump hosts, port
-forwards, a Tasks concept like Royal's, terminal theme picker, Kerberos
-(current-user) binds for the AD provider.
+forwards, a Tasks concept like Royal's, per-connection RDP options
+(drives, printers, gateway), Kerberos (current-user) binds for the AD
+provider, binding the vault key to a Windows Hello credential.
 
 ## Current state (update in every commit)
 
-As of 2026-11-18, on `main`.
+As of 2026-11-19, on `main`.
 
-This commit removes the Mac-only tree (`App/`, `bridge/`, `tools/`,
-`Makefile`) imported in `e2d77a4`, rewrites this file and `README.md` for
-the Windows port, and sets `.gitignore` for .NET output. The VS Code
-Swift extension no longer prompts for a toolchain. The Rust core is
-unchanged and still has the seven Windows compile errors listed under
-"Core port status"; nothing builds or runs on Windows yet.
+This change set is the first Windows app and its first release,
+**Toolbox 0.1.0**:
+- Core, ported to Windows (2026-11-18): Unix-only code behind
+  `cfg(unix)` with Windows counterparts (permissions, SFTP test server
+  file I/O, SSH agent over the named pipe, home directory, `op.exe`
+  lookup); IronRDP and `rdp.rs` removed. Added on 2026-11-19:
+  `display.rs` with `rdp_desktop_size` (from the Mac repo's fix), the Mac
+  repo's identifier scrub in tests and examples (demo/secret, ACME,
+  corp.example), the `staticlib` crate type dropped, `uniffi.toml` for
+  C#. 38 tests pass, clippy clean.
+- App: everything under `app/` is new. See "Parity with the Mac app" for
+  what exists and what was exercised.
+- Tools: `build.ps1` (with `package`), `publish.ps1`, the e2e harness.
+- Docs: README rewritten, two security review addenda (the app; packaged
+  builds), release notes for 0.1.0, these notes.
 
-Next: fix the core's Unix-only code so `cargo test --features
-test-support` passes on Windows, drop `rdp.rs` and IronRDP, then
-scaffold `app/` (WPF project, UniFFI C# bindings, build.ps1) and get a
-window with the sidebar tree reading `connections.json`.
+Released: v0.1.0 goes on the Releases page as two self-contained,
+unsigned zips (win-arm64, win-x64) with SHA256SUMS, built from this
+commit. Both packages were run against the fixture and test servers
+before publishing: ARM64 natively, x64 under emulation (terminal, FTP
+browser, vault, the RDP control loading). No x64 hardware has run it.
+
+For the owner to decide or try:
+- The password fallback of the owner check (see Decisions). Try one vault
+  unlock with the real account password; turn it off in the Vault menu if
+  it is not wanted.
+- A code-signing certificate, so coworkers stop seeing SmartScreen.
+- The Mac repo, now public, still has a real internal hostname in the
+  test data of `core/toolbox-core/src/onepassword.rs` (two lines, the
+  item URL); it is replaced here.
+- This repo's three earlier commits carry the old wording (real domain
+  in CLAUDE.md, names) and a personal email address in their metadata
+  (this clone has used the no-reply address since). Harmless while the
+  repo is private; it needs the same history rewrite as the Mac repo
+  before it is ever made public.
+
+Next: VNC, then signing and an installer (see the list above).

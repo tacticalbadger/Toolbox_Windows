@@ -33,7 +33,7 @@ async fn main() {
     let server = ssh_test_server::start(
         format!("127.0.0.1:{port}").parse().expect("address"),
         TestServerConfig {
-            username: "matt".into(),
+            username: "demo".into(),
             password: "secret".into(),
             sftp_root: root.clone(),
             host_key,
@@ -42,7 +42,7 @@ async fn main() {
     )
     .await
     .expect("start ssh test server");
-    eprintln!("echo server listening on {} (matt / secret), sftp root {}", server.addr, root.display());
+    eprintln!("echo server listening on {} (demo / secret), sftp root {}", server.addr, root.display());
     loop {
         tokio::time::sleep(Duration::from_secs(3600)).await;
     }

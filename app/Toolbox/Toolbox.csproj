@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- The Windows SDK part of the framework name brings the WinRT
+         projection that Windows Hello (UserConsentVerifier) needs. -->
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifiers>win-arm64;win-x64</RuntimeIdentifiers>
+    <SelfContained>false</SelfContained>
+    <UseWPF>true</UseWPF>
+    <!-- Windows Forms hosts Microsoft's RDP ActiveX control (mstscax). -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>Toolbox</AssemblyName>
+    <RootNamespace>Toolbox</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon Condition="Exists('Assets\Toolbox.ico')">Assets\Toolbox.ico</ApplicationIcon>
+    <!-- The UniFFI bindings marshal buffers with pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- WPF0001: the Fluent theme (ThemeMode) is still flagged as evaluation API.
+         WFO0003: Windows Forms wants DPI awareness set in code; this is a WPF
+         app, which takes it from app.manifest. -->
+    <NoWarn>$(NoWarn);WPF0001;WFO0003</NoWarn>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- With both UI frameworks on, these implicit usings make Application,
+         Button, Clipboard and friends ambiguous. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Both produced by "tools\build.ps1 core"; neither is in git. -->
+    <Compile Include="..\Generated\toolbox_core.cs" Link="Core\toolbox_core.cs" />
+    <Content Include="..\runtimes\$(RuntimeIdentifier)\native\toolbox_core.dll" Link="toolbox_core.dll"
+             Condition="'$(RuntimeIdentifier)' != ''" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The terminal page; Assets\Terminal\xterm comes from "tools\build.ps1 assets". -->
+    <Content Include="Assets\Terminal\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="Assets\Toolbox.ico" Condition="Exists('Assets\Toolbox.ico')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Toolbox.Tests" />
+  </ItemGroup>
+
+</Project>

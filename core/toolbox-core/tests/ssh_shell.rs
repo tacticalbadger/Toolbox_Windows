@@ -36,7 +36,7 @@ impl server::Handler for EchoServer {
     type Error = russh::Error;
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
-        Ok(if user == "matt" && password == "secret" {
+        Ok(if user == "demo" && password == "secret" {
             Auth::Accept
         } else {
             Auth::reject()
@@ -44,7 +44,7 @@ impl server::Handler for EchoServer {
     }
 
     async fn auth_publickey(&mut self, user: &str, _key: VerifiedPublicKey<'_>) -> Result<Auth, Self::Error> {
-        Ok(if user == "matt" { Auth::Accept } else { Auth::reject() })
+        Ok(if user == "demo" { Auth::Accept } else { Auth::reject() })
     }
 
     async fn channel_open_session(
@@ -172,7 +172,7 @@ fn config(port: u16, password: &str, known_hosts: &std::path::Path) -> SshConfig
     SshConfig {
         host: "127.0.0.1".into(),
         port,
-        username: "matt".into(),
+        username: "demo".into(),
         auth: SshAuth::Password {
             password: password.into(),
         },
