@@ -3,7 +3,6 @@ name = "toolbox-core"
 version = "0.1.0"
 edition = "2021"
 description = "Connection engine for Toolbox: SSH, SFTP, FTP, VNC, vault and providers"
-license = "MIT"
 
 [lib]
 name = "toolbox_core"

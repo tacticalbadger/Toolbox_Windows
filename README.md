@@ -252,3 +252,12 @@ overrides: `TOOLBOX_STORE_PATH`, `TOOLBOX_VAULT_PATH`,
 with an addendum per security-relevant change (most recently the review
 for 0.2.1: clipboard sharing with remote desktops, and what was hardened
 after reading the whole Windows app again).
+
+## License
+
+Toolbox is proprietary software, not open source. Copyright (c) 2026
+tacticalbadger. All rights reserved.
+
+The source is public so that it can be read. You may download and run the
+released app. Copying, changing or redistributing the code or the app needs
+written permission. The terms are in [`LICENSE`](LICENSE).

@@ -314,6 +314,14 @@ resize requests, `graphics=` the pipeline's capability set).
   rewritten on 2026-11-19 so that this holds for every commit (see
   Current state). The same goes for what is handed out: `build.ps1`
   keeps the build machine's paths out of the binaries (see the gotchas).
+- **The license is proprietary** (the owner, 2026-11-23, for every public
+  repository on the account: "the most restricting license my code can
+  have"). `LICENSE` is all rights reserved, with one permission: to run
+  the builds the owner hands out. Its copyright line carries the account
+  name `tacticalbadger`, which the owner chose over a real name so that
+  the rule above holds. Do not add an open-source license or a `license`
+  field to a manifest, and keep the README's License section in step with
+  `LICENSE`. Third-party components keep their own licenses.
 - Keep `README.md` ("What works", "Not there yet") and
   `docs/SECURITY-REVIEW.md` current.
 - Secrets never go in `connections.json`; they live in the vault,
@@ -541,6 +549,13 @@ NLA for RDP (see the security review of 2026-11-20; direct CredSSP may do
 it and needs a real host to try).
 
 ## Current state (update in every commit)
+
+**License, 2026-11-23, on the owner's word and pushed:** `LICENSE` added
+(proprietary, see Conventions), a License section in `README.md`, and the
+`license = "MIT"` line taken out of `core/toolbox-core/Cargo.toml`. No
+code changed. The commit was made on the Mac from a fresh clone, so
+`tools\build.ps1 test` was not run for it; `cargo metadata` still reads
+the manifest. Pull before other work.
 
 As of 2026-11-20, on `main`. **Version 0.2.1**: the Mac's 0.3.0 brought
 over, a security pass, and a release. (0.2.0 is the same app; its release
