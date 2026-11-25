@@ -96,11 +96,33 @@ Swift tree → C# tree: `App/` (delegate, menu) → `App.xaml.cs`,
   account password and Windows verifies it, as the Mac build falls back to
   the login password. See the security review addendum of that date.
 - **Audience: the owner plus coworkers soon.** x64 and ARM64 builds, an
-  installer (MSIX or Inno Setup, not yet chosen) and a code-signing
-  certificate are in scope. Since 2026-11-19 there are unsigned,
-  self-contained zips for both architectures on the repo's Releases page
-  (owner asked for a release that day); installer and certificate are not
-  started. From 0.3.0 an installed copy updates itself from there.
+  installer and a code-signing certificate are in scope. Since 2026-11-19
+  there are unsigned, self-contained zips for both architectures on the
+  repo's Releases page (owner asked for a release that day); from 0.3.0
+  an installed copy updates itself from there; from 0.3.1 there is an
+  installer and a disc image (next bullet). The certificate is not
+  started.
+- **A release is an installer, a disc image and a zip, for each
+  architecture** (owner, 2026-11-25: "there should be an ISO for the arm
+  and x64 versions on git, just as with heracles. both should be packaged
+  installers as well … as msi or exe installers"; Heracles-Windows is the
+  owner's other app, `..\Heracles-Windows`). What Claude chose within
+  that, open to change:
+  - **EXE, made with Inno Setup 7, not MSI.** The app replaces its own
+    files when it updates, and Windows Installer repairs or resents files
+    it did not put there. The installer is per user
+    (`PrivilegesRequired=lowest`, into `%LOCALAPPDATA%\Programs\Toolbox`)
+    so the app can write where it lives and no administrator is needed.
+  - **The disc holds the installer and the app's folder** (`README.txt`,
+    `Toolbox-<version>-win-<arch>-setup.exe`, `Toolbox\`), named `Toolbox
+    <version>`: Heracles's disc plus the installer, so a disc is enough
+    either way. Made with Windows' own IMAPI2 by `tools\disc-image.ps1`,
+    the same file as in Heracles-Windows (keep the two in step).
+  - **The zip stays**: it is what installed copies download, and the feed
+    names it. Nothing about updates changed.
+  - Inno Setup is free to use; its authors ask commercial users to buy a
+    licence (not required). Whether this use calls for one is the
+    owner's to decide.
 - **Data: start fresh on Windows.** Nothing migrated from the Mac.
 - Claude's choices, open to change: one window with a shared sidebar and
   workspaces as tabs inside it (Windows has no native window tabs);
@@ -150,7 +172,8 @@ Swift tree → C# tree: `App/` (delegate, menu) → `App.xaml.cs`,
   `SidebarNode`, the four editors, `FormBuilder`, `CredentialPicker`),
   `Model/` (`AppModel`, `VaultManager`,
   `OwnerCheck`, `CredentialResolver`, `ProviderSync`, the drafts),
-  `Support/` (`AppPaths`, `AppSettings`, `Log`, `Prompts`, `Icons`, and
+  `Support/` (`AppPaths`, `AppSettings`, `Log`, `Prompts`, `Icons`,
+  `InstalledCopy` (the version under "Installed apps"), and
   the updater: `Updates`, `UpdateFeed`, `UpdateInstaller`,
   `UpdateWindow`), `Assets/Terminal/` (the terminal page with its find
   bar; `xterm/` is fetched).
@@ -159,16 +182,23 @@ Swift tree → C# tree: `App/` (delegate, menu) → `App.xaml.cs`,
 - `app/Toolbox.Tests/` — xunit tests for the app's own logic (how a
   desktop is placed in a pane, credential search, names and text that
   come from a server, tab titles, folder moves, Terminal profiles, the
-  update feed and the file swap). `tools\build.ps1 test` runs them after
+  update feed and the file swap, the installed copy's registry entry).
+  `tools\build.ps1 test` runs them after
   the Rust tests. Not covered yet: `PaneTree`, `PaneLayout`, most of the
   drafts.
 - `tools/build.ps1` — targets `core`, `assets`, `app`, `test`, `run`,
-  `package`, `feed`, `clean`. `tools/publish.ps1` — GitHub Release from
-  the packages and the feed (the counterpart of the Mac's `make
+  `package` (for one architecture: the staged folder, its zip, the
+  installer, the disc image, `SHA256SUMS`), `feed`, `clean`.
+  `tools/installer/Toolbox.iss` — the Inno Setup script `package`
+  compiles. `tools/disc-image.ps1` — `New-DiscImage`,
+  `Compare-DiscImage`, `Remove-DiscImage` (dot-sourced by `build.ps1`).
+  `tools/publish.ps1` — GitHub Release from the installers, images, zips
+  and the feed (the counterpart of the Mac's `make
   publish`). `tools/update-key.ps1` — the update key: create, check,
   sign, verify, export, import. `tools/e2e/` — `make-fixture.ps1`,
   `make-rdp-server.ps1`, `servers.ps1`, `launch.ps1`, `capture.ps1`,
-  `ui.ps1` (UI Automation and synthetic input), `update-rehearsal.ps1`.
+  `ui.ps1` (UI Automation and synthetic input), `update-rehearsal.ps1`,
+  `check-disc.ps1`, `check-installer.ps1`.
 - `VERSION` holds the marketing version; the build number is the commit
   count (`FileVersion` 0.1.0.N, shown in Help ▸ About and the log's first
   line).
@@ -186,7 +216,12 @@ stable 1.100, Visual Studio 2022 Build Tools 17.14 with the C++ workload,
 .NET SDK 10.0.404 (11.0.100 is there too since 2026-11-20 and is the one
 `dotnet` picks; the app still targets .NET 10 and packages carry runtime
 10.0.15), `uniffi-bindgen-cs` from tag `v0.12.0+v0.32.0`, LLVM 23 and
-CMake 4.4, cargo-audit 0.23 (since 2026-11-20). **clang and cmake are
+CMake 4.4, cargo-audit 0.23 (since 2026-11-20), Inno Setup 7.1.1 (since
+2026-11-25, for this account only: `winget install --id
+JRSoftware.InnoSetup.7 -e --custom /CURRENTUSER`, which lands in
+`%LOCALAPPDATA%\Programs\Inno Setup 7`; `build.ps1` finds `ISCC.exe`
+there, and its help is `ISetup.chm`, which `hh.exe -decompile <folder>
+ISetup.chm` turns into pages that can be searched). **clang and cmake are
 mandatory on ARM64** (`aws-lc-sys`, `ring`). WebView2 runtime ships with
 Windows 11, and so does Windows Terminal (1.25 here; local terminals are
 its windows). Not installed: Node (xterm.js is fetched by `build.ps1`),
@@ -269,12 +304,19 @@ Release flow (the order matters: the build number is the commit count and
 ```powershell
 # bump VERSION if needed, add docs\release-notes\<version>.md, update Current state
 git commit ...; git push origin main
-tools\build.ps1 core assets package            # win-arm64 zip
-tools\build.ps1 core package -Arch x64         # win-x64 zip (cross-compiled; runs here under emulation)
+tools\build.ps1 core assets package            # win-arm64: -setup.exe, .iso, .zip
+tools\build.ps1 core package -Arch x64         # win-x64 the same (cross-compiled; runs here under emulation)
 tools\build.ps1 feed                           # update.json + update.json.sig for both (needs the update key)
+tools\e2e\make-fixture.ps1                     # the checks below run the packages against it
+tools\e2e\check-disc.ps1                       # and -Arch x64: the image as a drive, the app started from it (16 checks)
+tools\e2e\check-installer.ps1                  # and -Arch x64: install, self-update, uninstall (29 checks; see below)
 tools\e2e\launch.ps1 -Exe build\release\Toolbox-<version>-win-x64\Toolbox.exe --connect echo   # test what ships
 tools\publish.ps1 -DryRun                      # then without -DryRun
 ```
+
+`package` removes that architecture's installer, image and zip and the
+feed before it builds, so `feed` comes after both. An ISO is some 260 MB
+and an installer some 60: a release is about 800 MB to upload.
 
 Releases on this repository are immutable (a GitHub setting): once one is
 published its files and tag are fixed, and the tag name can never be used
@@ -301,8 +343,22 @@ tools\e2e\launch.ps1 --connect echo --connect echo-1p     # relaunch against the
 tools\e2e\capture.ps1                 # PNG of every Toolbox window (and Windows Security dialogs) -> build\e2e\shots
 tools\e2e\ui.ps1 tree                 # also: find, invoke, expand, select, setvalue, value, focus, press, click, clickat, drag, keys, text
 tools\e2e\update-rehearsal.ps1        # a whole self-update from a test feed with a test key, and what must be refused
+tools\e2e\check-disc.ps1              # a packaged disc image mounted as a drive, and the app started from it (-Arch x64 for the other)
+tools\e2e\check-installer.ps1         # a packaged installer run for real: install, self-update, uninstall (-Arch x64; -Keep keeps its logs)
 tools\e2e\servers.ps1 stop
 ```
+
+`check-installer.ps1` runs the installer that ships, silently, into
+`build\e2e-install`, so for a minute this account has Toolbox under
+Installed apps and in the Start menu; it removes both, and **refuses to
+start when Toolbox is already installed for the account** (it would
+install over the real copy and then remove it), or when a real copy has
+a download waiting in `%LOCALAPPDATA%\Toolbox\updates`. It needs the
+package, the feed (`build.ps1 feed`: the installed copy updates itself
+from `build\release`, read as a folder, with the real key) and the
+fixture. Once the owner installs Toolbox on the dev PC with the
+installer, this check can no longer run there as it is; give the script
+an AppId of its own to test with then, or run it in another account.
 
 Fixture ids: `echo` (key file, folder Jump Boxes), `echo-1p` (1Password
 credential through the fake `op.cmd`), `echo-folder` (folder credential →
@@ -750,6 +806,41 @@ Found on Windows:
     old files to remove; files neither version lists are left alone.
   - Downloads go to `%LOCALAPPDATA%\Toolbox\updates` (a fixture run:
     `TOOLBOX_UPDATES_DIR`), removed 20 s into the next start.
+- **The installer and the updater share one folder, and `files.txt` is
+  what keeps them apart** (`tools\installer\Toolbox.iss`,
+  `Support/InstalledCopy.cs`).
+  - The uninstaller's own files (`unins000.exe`, `unins000.dat`) sit in
+    the app's folder and are in no `files.txt`, so an update leaves them
+    alone. Never add them to the manifest, and never make an update
+    remove files it does not know.
+  - The installer's log only knows the files of the version it
+    installed. A copy that updated itself holds later files, so both the
+    uninstaller and an install over an existing copy first remove what
+    the folder's own `files.txt` lists (`RemoveListedFiles` in the
+    script), and only in a folder that holds `Toolbox.exe`. Files nobody
+    listed stay, as with an update.
+  - `AppId` in the script and `InstalledCopy.AppId` are one value (a
+    test compares them) and must never change: Windows and the next
+    installer know an installed copy by it. The app writes
+    `DisplayVersion` into that entry at start, only when the entry's
+    `InstallLocation` is the folder it runs from.
+  - The installer must stay per user. In a folder the user cannot write
+    to, the app cannot update itself.
+  - Inno Setup details that cost time: `--define=Name=value` on ISCC's
+    command line; `{{#AppId}` writes a brace before a GUID;
+    `PrepareToInstall` returning text ends a silent install with exit
+    code 7; `InitializeUninstall` returning False gives a non-zero exit;
+    a running program is found by trying to open its file for writing
+    (`TFileStream` with `fmShareExclusive`); `InternalCompressLevel=none`
+    leaves Setup's tables readable, which is how `Find-PrivatePaths` can
+    look through the installer (it stores no source paths); the Setup
+    program is 32-bit x86 for both packages and installs in 64-bit mode
+    (`ArchitecturesInstallIn64BitMode`), so the ARM64 installer also runs
+    where there is no x64 emulation. The uninstaller hands its last steps
+    to a copy of itself in TEMP: wait for the registry key to go, not for
+    the process.
+  - `Find-PrivatePaths` reads a whole file into memory as text: fine for
+    a 270 MB image on this machine, slow beyond that.
 
 ## Not verified against real infrastructure
 
@@ -766,8 +857,16 @@ file's passphrase prompt, private keys from the vault, Windows 10, the
 x64 build on x64 hardware (it has run under emulation here), and a
 coworker actually installing a release.
 
+New in 0.3.1 and not verified: the installer under a hand (its pages
+were never looked at: every run was silent), on a PC other than the one
+that built it, on x64 hardware and on Windows 10, and downloaded from
+the web (what SmartScreen says to an unsigned installer); the disc image
+double-clicked in File Explorer; the desktop shortcut option; an install
+over an older installed version (there is no older installer yet).
+
 New in 0.3.0 and not verified: an update between two published releases
-(the first real one will be 0.3.0 to whatever comes next); an update of
+(0.3.0 to 0.3.1 is the first there can be; see Current state for whether
+it has been tried); an update of
 a copy in a folder it may not write to; cancelling a download; the
 update question when sessions are open. For local terminals: what the
 user's other Windows Terminal windows do when Toolbox is killed outright
@@ -830,11 +929,13 @@ From the Mac's 0.3.1, 0.4.0 and 0.5.0, in Windows 0.3.0:
 
 Missing, in suggested order:
 1. **VNC** (`vnc.rs` in the core + a test server + `VncPane`).
-2. Code signing and an installer. Zips, `publish.ps1` and updates exist
-   (the Mac side has Developer ID signing, notarization and a DMG);
-   without a certificate every recipient gets the SmartScreen warning at
-   the first download (updates do not show it). The x64 package has only
-   run under emulation on the ARM64 dev machine.
+2. Code signing. An installer, a disc image, zips, `publish.ps1` and
+   updates exist (the Mac side has Developer ID signing, notarization
+   and a DMG); without a certificate every recipient gets the
+   SmartScreen warning at the first download (updates do not show it).
+   Inno Setup signs the installer and its uninstaller when given a
+   `SignTool`. The x64 package has only run under emulation on the ARM64
+   dev machine.
 3. **Retina Resolution's counterpart** (a desktop with fewer pixels,
    magnified). Needs magnification the control cannot be trusted with
    (see the gotchas). The way that might work: host the control in a
@@ -870,8 +971,63 @@ it and needs a real host to try).
 
 ## Current state (update in every commit)
 
-As of 2026-11-25, on `main`. **Version 0.3.0 (build 10)**: the Mac's
-0.3.1, 0.4.0 and 0.5.0 brought over, and a release.
+As of 2026-11-25, on `main`. **Version 0.3.1**: 0.3.0 with an installer
+and a disc image for each architecture. The app itself is 0.3.0's but for
+one thing (`InstalledCopy`, below).
+
+**The 0.3.1 change set** (owner, 2026-11-25, the same day as 0.3.0:
+"there should be an ISO for the arm and x64 versions on git, just as with
+heracles. both should be packaged installers as well. go ahead and build
+releases for heracles and toolbox as msi or exe installers. install the
+dependencies now"). v0.3.0 could not be given the files: its release is
+immutable. So a new version, in both repositories (Heracles-Windows got
+the same installer work in its own 0.3.1; its notes say how that went).
+
+- **Installer**: `tools\installer\Toolbox.iss`, compiled by `build.ps1
+  package` with Inno Setup 7.1.1 (installed that day, per user). Per
+  user, no administrator, `%LOCALAPPDATA%\Programs\Toolbox`, Start menu
+  shortcut, optional desktop shortcut, an uninstaller under Installed
+  apps. EXE and not MSI: see Decisions.
+- **Disc image**: `tools\disc-image.ps1` (Heracles-Windows's file) and
+  the ISO step in `package`. The disc holds the installer, the `Toolbox`
+  folder and a `README.txt`.
+- **The app**: `Support/InstalledCopy.cs`, called at start, keeps the
+  version under Installed apps right for a copy that updated itself.
+  Seven tests (109 app tests now).
+- `publish.ps1` requires, checks and uploads the installers and images
+  with the zips and the feed; its install notes are rewritten.
+- `tools\e2e\check-disc.ps1` and `check-installer.ps1`.
+- README, the security review (an addendum), release notes for 0.3.1.
+
+Verified before the commit, on trial packages built from the working
+tree (build 11): 43 Rust tests, 109 app tests; `package` for both
+architectures (each image read back and compared with what went in, the
+installer and the image scanned for the build machine's paths); the disc
+check on both (16 checks each: mounted as a drive, the app started from
+the disc against the fixture and closed); the installer check on both
+(29 checks each, x64 under emulation): a folder with other files
+refused, a silent install compared with the package file for file, the
+entry under Installed apps and the Start menu shortcut, **the installed
+copy updating itself from the signed feed in `build\release` and coming
+back**, the uninstaller surviving that, the version under Installed apps
+put right by the app, the uninstaller refusing while the app runs, and
+an uninstall that leaves only a file of the user's own.
+
+Not verified: see "Not verified against real infrastructure" (the
+installer was never run with its pages showing, or anywhere but here).
+
+For the owner, new with 0.3.1:
+- Inno Setup is free to use, and its authors ask commercial users to buy
+  a licence (https://jrsoftware.org/isorder.php). Whether handing these
+  builds to coworkers counts is yours to decide.
+- To move this PC's copy to an installed one: close Toolbox, run the
+  installer, delete the old folder. Data is in `%APPDATA%\Toolbox` and
+  stays. After that `check-installer.ps1` will refuse to run in this
+  account (it will not touch a real install).
+- Still open: **back up the update key** (below).
+
+**The 0.3.0 state (2026-11-25, build 10)**: the Mac's 0.3.1, 0.4.0 and
+0.5.0 brought over, and a release.
 
 The owner asked in one message for parity with the Mac's new versions,
 tested, "and a new build pushed at the end", and for options on "terminal
@@ -949,7 +1105,7 @@ For the owner:
   code-signing certificate, the reduced-resolution switch, NLA for RDP,
   the old clones.
 
-Next: VNC, then signing and an installer.
+Next: VNC, then signing.
 
 Released: **v0.3.0 (build 10)** is published (2026-11-25; the tag is on
 `5d4b3f1`) as two self-contained, unsigned zips (win-arm64, win-x64)

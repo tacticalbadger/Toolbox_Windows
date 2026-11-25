@@ -16,15 +16,28 @@ repository's history (commit `3462de1`) as the reference for the port.
 
 The latest build is on the
 [Releases page](https://github.com/tacticalbadger/Toolbox_Windows/releases/latest):
-take the zip for your PC (`win-x64` for most, `win-arm64` for Windows on
-ARM), unblock it (right-click ▸ Properties ▸ Unblock), extract it to a
-folder of your own (for example `%LOCALAPPDATA%\Programs`) and run
-`Toolbox.exe`. Nothing needs installing. The builds are not code-signed
-yet, so Windows asks before the first run: More info ▸ Run anyway.
+take the files for your PC (`win-x64` for most, `win-arm64` for Windows
+on ARM).
 
-From 0.3.0 on that is the last download by hand: Toolbox looks for a new
-version once a day and under Help ▸ Check for Updates…, shows what
-changed, and installs it when you agree (see "Updates" below).
+- **The installer**, `Toolbox-<version>-win-<arch>-setup.exe`: run it. It
+  installs for your Windows account only, asks for no administrator, puts
+  Toolbox in the Start menu, and is removed again under Settings ▸ Apps ▸
+  Installed apps.
+- **The disc image**, `Toolbox-<version>-win-<arch>.iso`: double-click it
+  and Windows opens it as a disc holding that installer and a `Toolbox`
+  folder. Run the installer, or copy the folder to a place of your own
+  (for example `%LOCALAPPDATA%\Programs`) and run `Toolbox.exe` from the
+  copy.
+- The `.zip` is the same folder again; it is what a copy of Toolbox
+  downloads when it updates itself.
+
+The builds are not code-signed yet, so Windows asks before the first
+run: More info ▸ Run anyway.
+
+That is the last download by hand: Toolbox looks for a new version once
+a day and under Help ▸ Check for Updates…, shows what changed, and
+installs it when you agree (see "Updates" below). An installed copy and
+a copied folder update themselves the same way.
 
 ## Layout
 
@@ -53,6 +66,7 @@ docs/     Security review, release notes and Royal TS reference material.
 | .NET SDK | 10.0 | `winget install Microsoft.DotNet.SDK.10` |
 | LLVM (clang) and CMake | 23 / 4.4 | `winget install LLVM.LLVM Kitware.CMake` (required on ARM64 by the crypto crates behind russh) |
 | uniffi-bindgen-cs | v0.12.0+v0.32.0 | `cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag v0.12.0+v0.32.0` |
+| Inno Setup (only for `package`) | 7.1.1 | `winget install --id JRSoftware.InnoSetup.7 -e --custom /CURRENTUSER` (no administrator needed) |
 | WebView2 Runtime | any current | part of Windows 11 |
 
 Fetched on first build (network needed once): Rust crates from crates.io,
@@ -91,14 +105,22 @@ Your connections, credentials, vault and settings live in
 
 ```powershell
 Set-Content VERSION 0.3.1                  # when the version should change
-tools\build.ps1 core assets package        # build\release\Toolbox-<version>-win-arm64.zip (on an ARM64 PC)
-tools\build.ps1 core package -Arch x64     # ...-win-x64.zip; cross-compiles, no extra tools needed
+tools\build.ps1 core assets package        # build\release\Toolbox-<version>-win-arm64: -setup.exe, .iso and .zip (on an ARM64 PC)
+tools\build.ps1 core package -Arch x64     # ...-win-x64; cross-compiles, no extra tools needed
 tools\build.ps1 feed                       # update.json and its signature: what installed copies read
-tools\publish.ps1                          # GitHub Release v<version> with the zips, SHA256SUMS and the feed
+tools\e2e\check-disc.ps1                   # the disc image opened as a drive, the app started from it (-Arch x64 for the other)
+tools\e2e\check-installer.ps1              # the installer run for real: install, self-update, uninstall (-Arch x64 likewise)
+tools\publish.ps1                          # GitHub Release v<version> with all of them, SHA256SUMS and the feed
 ```
 
 A package is a folder with everything inside, the .NET runtime included,
-zipped. The build number is the commit count, and `publish.ps1` insists
+handed out three ways: an installer (made with Inno Setup from
+`tools\installer\Toolbox.iss`), a disc image holding that installer and
+the folder (made with what Windows has for writing discs), and a zip for
+copies that update themselves. The installer is per user and needs no
+administrator, because the app replaces its own files when it updates
+and so has to live where its user may write; that is also why it is not
+an MSI. The build number is the commit count, and `publish.ps1` insists
 that the packages were built from the current commit and that the commit
 is pushed, so commit and push first, then package, then publish. It
 writes the release notes: the standard install text plus the bullets in
@@ -143,8 +165,9 @@ the script rewrites the source paths compilers leave in the DLL, which
 would otherwise carry your account name to everyone who downloads the
 package. `package` refuses a build that still has them.
 
-Still to do here: an installer and a code-signing certificate. Until
-then every recipient sees the SmartScreen warning once.
+Still to do here: a code-signing certificate. Until then every
+recipient sees the SmartScreen warning once, for the installer as for
+the app.
 
 ## What works
 
@@ -270,7 +293,7 @@ and settings are elsewhere and are not touched. A copy you built yourself
 ## Not there yet
 
 Compared with the Mac app: **VNC** (a VNC connection says so instead of
-opening), code signing and an installer (releases are unsigned zips), the
+opening), code signing (the installer and the app are unsigned), the
 app icon, and selecting several sidebar items at once. Local terminals
 are Windows Terminal's windows where the Mac runs a shell in its own
 terminal: the app's themes, text size and find bar do not reach them, and

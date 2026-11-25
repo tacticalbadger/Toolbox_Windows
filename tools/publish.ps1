@@ -6,12 +6,14 @@
 .DESCRIPTION
         tools\publish.ps1 [-Replace] [-Prerelease] [-DryRun]
 
-    Tag v<version> (from the VERSION file), with both
-    build\release\Toolbox-<version>-win-<arch>.zip, SHA256SUMS and the update
-    feed (update.json, update.json.sig from "tools\build.ps1 feed") attached,
-    so the app can be downloaded from the repo's Releases page and installed
-    copies are offered the version. Publishing is the moment they start
-    being offered it.
+    Tag v<version> (from the VERSION file). Attached, for each of win-arm64
+    and win-x64 from build\release: the installer
+    (Toolbox-<version>-win-<arch>-setup.exe), the disc image (.iso) and the
+    zip that installed copies download to update themselves; then SHA256SUMS
+    and the update feed (update.json, update.json.sig from "tools\build.ps1
+    feed"). So the app can be installed from the repo's Releases page, and
+    installed copies are offered the version. Publishing is the moment they
+    start being offered it.
 
     Before anything is sent: the checksums are verified, the packages must
     have been built from the current commit (their build number is the commit
@@ -68,7 +70,7 @@ function Invoke-Git {
 
 $packages = @(Get-ChildItem $Out -Filter "Toolbox-$Version-win-*.zip" -ErrorAction SilentlyContinue | Sort-Object Name)
 if ($packages.Count -eq 0 -or -not (Test-Path $SumsPath)) {
-    throw "no packages for $Version in build\release; run: tools\build.ps1 core assets package (and again with -Arch for the other architecture)"
+    throw "no packages for $Version in build\release; run: tools\build.ps1 core assets package (and again with -Arch for the other architecture), then tools\build.ps1 feed"
 }
 
 Step 'Checking the files'
@@ -91,6 +93,34 @@ foreach ($package in $packages) {
         throw "$($package.Name) is build $($fileVersion.FilePrivatePart), but the current commit is number $commitCount. Package again from this commit."
     }
     Write-Host ("{0}  {1:N0} MB  build {2}" -f $package.Name, ($package.Length / 1MB), $fileVersion.FilePrivatePart)
+}
+
+# What people install from: an installer and a disc image for each
+# architecture, made by the same package step as the zip beside them (it
+# removes all three before it builds, so none is left over from another
+# build).
+$installers = @()
+$images = @()
+foreach ($rid in 'win-arm64', 'win-x64') {
+    $setup = Join-Path $Out "Toolbox-$Version-$rid-setup.exe"
+    $image = Join-Path $Out "Toolbox-$Version-$rid.iso"
+    foreach ($path in $setup, $image) {
+        if (-not (Test-Path $path)) { throw "no $(Split-Path -Leaf $path) in build\release; run: tools\build.ps1 core package -Arch $($rid -replace 'win-', '')" }
+        $file = Get-Item $path
+        $actual = (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        if (-not $expected.ContainsKey($file.Name) -or $expected[$file.Name] -ne $actual) {
+            throw "$($file.Name) does not match SHA256SUMS; run the package step again"
+        }
+    }
+    # The installer carries the build number in its own version.
+    $setupVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($setup)
+    if ($setupVersion.FilePrivatePart -ne $commitCount) {
+        throw "$(Split-Path -Leaf $setup) is build $($setupVersion.FilePrivatePart), but the current commit is number $commitCount. Package again from this commit."
+    }
+    $installers += Get-Item $setup
+    $images += Get-Item $image
+    Write-Host ("{0}  {1:N0} MB  build {2}" -f (Split-Path -Leaf $setup), ((Get-Item $setup).Length / 1MB), $setupVersion.FilePrivatePart)
+    Write-Host ("{0}  {1:N0} MB" -f (Split-Path -Leaf $image), ((Get-Item $image).Length / 1MB))
 }
 
 # The update feed. Installed copies read update.json from the newest release:
@@ -131,19 +161,20 @@ $Repo = $Matches[2]
 
 # ----- The notes -----
 
-$architectures = ($packages | ForEach-Object { if ($_.BaseName -match 'win-(\w+)$') { $Matches[1] } }) -join ' and '
 $notes = @"
 Toolbox is a Windows client for SSH, RDP and file transfer, with split panes, workspace tabs, a credential vault and 1Password and Active Directory integration.
 
 ## Install
 
-1. Download the zip for your PC below: **win-x64** for most PCs, **win-arm64** for Windows on ARM (Settings > System > About shows the system type).
-2. Right-click the zip, choose **Properties**, tick **Unblock** and press OK. Then extract it to a folder of your own, for example ``%LOCALAPPDATA%\Programs``.
-3. Run **Toolbox.exe** from the extracted folder.
+Pick the files for your PC: **win-x64** for most PCs, **win-arm64** for Windows on ARM (Settings > System > About shows the system type).
 
-From 0.3.0 on Toolbox updates itself: it looks for a new version once a day and under **Help > Check for Updates**, shows what changed, and installs it when you agree. It can only do that in a folder it may write to, so not under Program Files.
+- **The installer** (``Toolbox-$Version-win-<arch>-setup.exe``): download it and run it. It installs Toolbox for you alone, asks for no administrator, adds it to the Start menu, and can be removed again under Settings > Apps > Installed apps.
+- **The disc image** (``Toolbox-$Version-win-<arch>.iso``): double-click it and Windows opens it as a disc. On it are the same installer and a **Toolbox** folder; run the installer, or copy the folder to a place of your own (for example ``%LOCALAPPDATA%\Programs``) and run **Toolbox.exe** from the copy. Eject the disc afterwards.
+- The ``.zip`` files are what installed copies download to update themselves. They hold the same folder, for whoever wants it that way.
 
-This build is **not code-signed yet**. If Windows shows "Windows protected your PC", choose **More info**, then **Run anyway**. Nothing needs installing: the .NET runtime is inside the folder. Requires Windows 10 version 2004 or newer, or Windows 11; on Windows 10 the Microsoft Edge WebView2 Runtime must be present (it is part of Windows 11).
+If you already have Toolbox 0.3.0 or newer, there is nothing to download: it offers this version by itself, or at once under **Help > Check for Updates**. It looks once a day, shows what changed, and installs when you agree. It can only do that in a folder it may write to, which is where the installer puts it.
+
+This build is **not code-signed yet**. If Windows shows "Windows protected your PC", choose **More info**, then **Run anyway**. The .NET runtime is inside; nothing else needs installing. Requires Windows 10 version 2004 or newer, or Windows 11; on Windows 10 the Microsoft Edge WebView2 Runtime must be present (it is part of Windows 11).
 
 ## First run
 
@@ -163,7 +194,7 @@ $title = "Toolbox $Version"
 if ($DryRun) {
     Step "Dry run: would publish $Tag to $Owner/$Repo at $($head.Substring(0, 7))"
     Write-Host "title: $title"
-    Write-Host "files: $(($packages | ForEach-Object { $_.Name }) -join ', '), SHA256SUMS, update.json, update.json.sig"
+    Write-Host "files: $((@($installers) + @($images) + @($packages) | ForEach-Object { $_.Name }) -join ', '), SHA256SUMS, update.json, update.json.sig"
     Write-Host '--- notes ---'
     Write-Host $notes
     return
@@ -237,6 +268,8 @@ try { $existing = Invoke-GitHub 'Get' "$api/releases/tags/$Tag" }
 catch { if ((Get-StatusCode $_) -ne 404) { throw "GitHub refused the request ($(Get-StatusCode $_)): $($_.Exception.Message)" } }
 
 function Send-Files($release) {
+    foreach ($installer in $installers) { Send-Asset $release $installer 'application/octet-stream' }
+    foreach ($image in $images) { Send-Asset $release $image 'application/x-iso9660-image' }
     foreach ($package in $packages) { Send-Asset $release $package 'application/zip' }
     Send-Asset $release (Get-Item $SumsPath) 'text/plain'
     # Last: from the moment the release is out, these two tell installed copies about it.
@@ -282,6 +315,6 @@ else {
 
 $published = Invoke-GitHub 'Get' "$api/releases/tags/$Tag"
 $names = @($published.assets | ForEach-Object { $_.name })
-$missing = @(@($packages | ForEach-Object { $_.Name }) + 'SHA256SUMS' + 'update.json' + 'update.json.sig' | Where-Object { $names -notcontains $_ })
+$missing = @(@(@($installers) + @($images) + @($packages) | ForEach-Object { $_.Name }) + 'SHA256SUMS' + 'update.json' + 'update.json.sig' | Where-Object { $names -notcontains $_ })
 if ($missing.Count -gt 0) { throw "release $Tag is out, but GitHub does not list: $($missing -join ', ')" }
 Write-Host "published: $($published.html_url) ($($names.Count) files)"

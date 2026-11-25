@@ -12,8 +12,11 @@
       app      the WPF app -> build\app\win-<arch>\Toolbox.exe
       test     Rust tests (in-process SSH, SFTP and FTP servers) and the .NET tests
       run      start the built app
-      package  self-contained build for handing out: a zip per architecture and
-               SHA256SUMS under build/release (needs "core" for that
+      package  self-contained build for handing out, under build/release, for
+               one architecture: an installer (-setup.exe, made with Inno
+               Setup), a disc image (.iso) holding the installer and the
+               app's folder, the same folder as a zip for copies that
+               update themselves, and SHA256SUMS (needs "core" for that
                architecture, and "assets", first)
       feed     update.json and its signature under build/release: what
                installed copies read to find this version (needs both
@@ -72,6 +75,9 @@ $Triple = if ($Arch -eq 'arm64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc
 $OutDir = Join-Path $Build "app\$Rid"
 $Exe = Join-Path $OutDir 'Toolbox.exe'
 $Version = (Get-Content (Join-Path $Root 'VERSION') -Raw).Trim()
+
+# New-DiscImage and Compare-DiscImage, for the package.
+. (Join-Path $PSScriptRoot 'disc-image.ps1')
 
 # A shell opened before the toolchain was installed does not have these on
 # PATH yet. clang and cmake are required by the crypto crates on ARM64.
@@ -349,23 +355,85 @@ function Get-BuildNumber {
     return $count
 }
 
+# The Inno Setup compiler, which makes the installer. Installed for the
+# account, with no administrator, by:
+#   winget install --id JRSoftware.InnoSetup.7 -e --custom /CURRENTUSER
+function Find-InnoSetup {
+    $onPath = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
+    if ($onPath) { return $onPath.Source }
+    foreach ($folder in $env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)}) {
+        if (-not $folder) { continue }
+        foreach ($sub in 'Programs\Inno Setup 7', 'Inno Setup 7') {
+            $candidate = Join-Path $folder "$sub\ISCC.exe"
+            if (Test-Path $candidate) { return $candidate }
+        }
+    }
+    throw 'the Inno Setup compiler (ISCC.exe) was not found. Install it: winget install --id JRSoftware.InnoSetup.7 -e --custom /CURRENTUSER'
+}
+
+# What the disc says of itself, in a file at its top, for whoever opens it
+# without the release page in front of them.
+function Get-DiscReadMe([string]$setupName) {
+    return @(
+        "Toolbox $Version for Windows ($Arch)",
+        '',
+        'To install it, run',
+        "    $setupName",
+        'from this disc. It installs Toolbox for you alone, asks for no',
+        'administrator, and adds it to the Start menu.',
+        '',
+        'Or, without installing anything: copy the Toolbox folder from this disc',
+        'to your PC, for example into %LOCALAPPDATA%\Programs, and run Toolbox.exe',
+        'from the copy.',
+        '',
+        'Either way, eject this disc afterwards. It is not needed again.',
+        '',
+        'Toolbox is not code-signed. If Windows shows "Windows protected your PC",',
+        'choose More info, then Run anyway.',
+        '',
+        'Your connections, credentials and settings are kept on your PC, under',
+        '%APPDATA%\Toolbox, and not in the folder the app runs from.',
+        '',
+        'Toolbox updates itself from here on: it looks for a new version once a',
+        'day, shows what changed, and replaces its own files when you agree. For',
+        'that it must be somewhere it can change, which is where the installer',
+        'puts it, and what a place of your own is.',
+        '',
+        'https://github.com/tacticalbadger/Toolbox_Windows'
+    )
+}
+
 # A folder that runs on a PC with nothing installed (the .NET runtime is
-# inside), zipped for the Releases page. Nothing in it is code-signed yet, so
-# Windows asks before running it the first time.
+# inside), handed out three ways: an installer, a disc image (Windows opens
+# an .iso as a disc when it is double-clicked) holding that installer and the
+# folder, and the folder as a zip, which is what a copy that updates itself
+# downloads. Nothing in it is code-signed yet, so Windows asks before running
+# it the first time.
 function New-Package {
     Assert-Tool 'dotnet' 'Install the .NET SDK: winget install Microsoft.DotNet.SDK.10'
     if (-not (Test-Path (Join-Path $App 'Generated\toolbox_core.cs'))) { throw 'no generated bindings; run: tools\build.ps1 core' }
     if (-not (Test-Path (Join-Path $App "runtimes\$Rid\native\toolbox_core.dll"))) { throw "no core DLL for $Rid; run: tools\build.ps1 core -Arch $Arch" }
     Assert-Assets
+    $iscc = Find-InnoSetup
 
     $number = Get-BuildNumber
     $name = "Toolbox-$Version-win-$Arch"
     $release = Join-Path $Build 'release'
     $stage = Join-Path $release $name
     $zip = Join-Path $release "$name.zip"
+    $setup = Join-Path $release "$name-setup.exe"
+    $iso = Join-Path $release "$name.iso"
+    $top = Join-Path $release "$name.top"
     New-Item -ItemType Directory -Force $release | Out-Null
     if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
-    if (Test-Path $zip) { Remove-Item -Force $zip }
+    if (Test-Path $top) { Remove-Item -Recurse -Force $top }
+    # Gone before anything is built: an installer, an image, a zip or a feed
+    # left from an earlier build must not sit beside a folder it was not made
+    # from.
+    Remove-DiscImage -Path $iso
+    foreach ($stale in $zip, $setup, (Join-Path $release 'update.json'), (Join-Path $release 'update.json.sig')) {
+        if (Test-Path $stale) { Remove-Item -Force $stale }
+    }
 
     Step "package: dotnet publish (self-contained, $Rid, $Version build $number)"
     $project = Join-Path $App 'Toolbox\Toolbox.csproj'
@@ -397,12 +465,59 @@ function New-Package {
     Step "package: $name.zip"
     Invoke-Native 'tar' { tar.exe -a -c -f $zip -C $release $name }
 
-    # Checksums for every package of this version that is there.
-    $lines = Get-ChildItem $release -Filter "Toolbox-$Version-win-*.zip" | Sort-Object Name | ForEach-Object {
+    # The installer: the same folder, put where its user may write, with a
+    # Start menu entry and an uninstaller (tools\installer\Toolbox.iss).
+    Step "package: $name-setup.exe"
+    $script = Join-Path $PSScriptRoot 'installer\Toolbox.iss'
+    Invoke-Native 'ISCC' {
+        & $iscc --quiet "--define=Version=$Version" "--define=Build=$number" "--define=Arch=$Arch" `
+            "--define=Stage=$stage" "--define=OutputDir=$release" "--define=OutputName=$name-setup" $script
+    }
+    if (-not (Test-Path $setup)) { throw "ISCC made no $name-setup.exe" }
+    $made = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($setup)
+    if ($made.FilePrivatePart -ne $number) { throw "$name-setup.exe says it is build $($made.FilePrivatePart), not $number" }
+    # Setup's tables are left uncompressed (see the script), so this reads them.
+    if (@(Find-PrivatePaths @($setup)).Count -gt 0) {
+        Remove-Item -Force $setup
+        throw "$name-setup.exe contains a path under this machine's profile folder."
+    }
+
+    # The disc: the installer and a few words at its top, and the app in a
+    # folder named Toolbox for whoever would rather copy it.
+    Step "package: $name.iso"
+    $label = "Toolbox $Version"
+    $holds = @{ Toolbox = $stage }
+    New-Item -ItemType Directory -Force $top | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $top 'README.txt'), ((Get-DiscReadMe "$name-setup.exe") -join "`r`n") + "`r`n", [System.Text.Encoding]::ASCII)
+    Copy-Item -LiteralPath $setup -Destination (Join-Path $top "$name-setup.exe")
+    try {
+        New-DiscImage -Path $iso -Label $label -Top $top -Folders $holds
+        # Read back as Windows reads it, before anyone else does: every file
+        # that went in must come out the same, and nothing else.
+        $different = @(Compare-DiscImage -Path $iso -Label $label -Top $top -Folders $holds)
+    }
+    finally {
+        Remove-Item -Recurse -Force $top
+    }
+    if ($different.Count -gt 0) {
+        Remove-Item -Force $iso
+        throw "the disc image does not hold what was put in it: $(($different | Select-Object -First 5) -join '; ')"
+    }
+    # The whole image this time, so every file in the package is looked at,
+    # and whatever the disc says of itself.
+    if (@(Find-PrivatePaths @($iso)).Count -gt 0) {
+        Remove-Item -Force $iso
+        throw "$name.iso contains a path under this machine's profile folder."
+    }
+
+    # Checksums for everything of this version that is there to be handed out.
+    $lines = Get-ChildItem $release -File | Where-Object {
+        $_.Name -like "Toolbox-$Version-win-*" -and ($_.Extension -in '.zip', '.iso' -or $_.Name -like '*-setup.exe')
+    } | Sort-Object Name | ForEach-Object {
         '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name
     }
     [System.IO.File]::WriteAllText((Join-Path $release 'SHA256SUMS'), (($lines -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
-    Write-Host ("ok: {0} ({1:N0} MB)" -f $zip, ((Get-Item $zip).Length / 1MB))
+    foreach ($file in $setup, $iso, $zip) { Write-Host ("ok: {0} ({1:N0} MB)" -f $file, ((Get-Item $file).Length / 1MB)) }
     Write-Host "ok: $(Join-Path $release 'SHA256SUMS')"
 }
 

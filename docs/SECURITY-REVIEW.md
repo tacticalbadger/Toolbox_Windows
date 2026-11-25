@@ -732,3 +732,66 @@ through its LDAP and FTPS libraries. Updated to the fixed version
 other third party's (WebView2's loader, the crates the core is built
 from). Their licenses ask for the notice to travel with copies; a build
 step that collects them is still to do, as on the Mac.
+
+## Addendum — 2026-11-25, later: Toolbox 0.3.1 (an installer and a disc image)
+
+Nothing in the app's handling of secrets, sessions or updates changed.
+What is new is how a first copy reaches a PC, and one registry value the
+app now writes.
+
+**The installer** (`Toolbox-<version>-win-<arch>-setup.exe`, made with
+Inno Setup 7.1.1 from `tools\installer\Toolbox.iss`).
+
+- It installs for the current user only and never asks for elevation
+  (`PrivilegesRequired=lowest`): files under `%LOCALAPPDATA%\Programs`,
+  one uninstall entry and one shortcut under `HKCU` and the user's Start
+  menu. Nothing machine-wide is written, so it adds no service, no
+  scheduled task, no file association and nothing that runs at sign-in.
+- **It is not code-signed**, like the app. Whoever downloads it has the
+  release page's `SHA256SUMS` and nothing stronger to tell a genuine
+  installer from another; SmartScreen warns once. The updates that follow
+  do not rest on this: they are checked against the update key. A
+  certificate is the fix, and is still open.
+- The installer's choice of folder is not taken at its word. A folder
+  that holds anything and no `Toolbox.exe` is refused, and a `files.txt`
+  is only believed (as the list of what to remove) in a folder that holds
+  `Toolbox.exe`: the list decides what gets deleted, on a later install
+  over the copy and at uninstall, so entries that are not plain names
+  below the folder (a drive, a `..`, a leading backslash) are skipped.
+  The uninstaller removes what was installed and what the app's own list
+  names; files nobody listed stay. It removes
+  `%LOCALAPPDATA%\Toolbox\updates` (downloads) and leaves
+  `%APPDATA%\Toolbox` (connections, vault, settings) alone.
+- A running copy is detected (its program cannot be opened for writing)
+  and the installer or uninstaller stops with words, where the default
+  would have Windows close the app, sessions and all.
+- Setup's internal tables are left uncompressed so that the build can
+  look through the finished installer for the build machine's paths, as
+  it does for the other binaries; `package` refuses one that has any.
+  Inno Setup does not store where the files came from, and the installer
+  holds no account name (checked on the first build).
+
+**The disc image** is made by Windows' own disc-writing component
+(IMAPI2), read back by mounting it, and compared file by file with what
+went in, as in the owner's other Windows app. It holds the installer and
+the same folder as the zip; nothing on it runs by itself (Windows has no
+AutoRun for mounted images).
+
+**The app and the registry.** At start the app now writes its version
+into `DisplayVersion` (and the two numbers beside it) of the uninstall
+entry the installer made, so that "Installed apps" follows a copy that
+updated itself. It does so only when that entry's `InstallLocation` is
+the folder the app runs from; a copy elsewhere, or one that was never
+installed, writes nothing. It is the app's first write to the registry,
+and it is confined to that one key under `HKCU`.
+
+**The build machine** gained Inno Setup, installed per user from winget
+(publisher's installer, hash checked by winget). Its licence allows this
+use; its authors ask commercial users to buy a licence, which is the
+owner's to decide.
+
+Checked with `tools\e2e\check-installer.ps1` on both packages (x64 under
+emulation): the refusal, the install compared with the package, what
+Windows was told, a self-update of the installed copy from the signed
+feed, the uninstaller refusing while the app runs, and the uninstall
+leaving only a file of the user's own.

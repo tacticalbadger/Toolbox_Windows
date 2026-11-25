@@ -61,6 +61,9 @@ public partial class App : Application
                  $"{System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture})");
         Log.Info($"store: {AppPaths.StorePath}");
 
+        // A copy the installer put here says which version it is now (it may have updated itself since).
+        InstalledCopy.RecordVersion();
+
         // Shells of local terminals that an earlier run left without a window when it was killed.
         Terminal.TerminalLedger.EndOrphans();
 
