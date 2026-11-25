@@ -355,6 +355,27 @@ function Get-BuildNumber {
     return $count
 }
 
+# Removes a folder, trying again for a while when Windows says a file in it
+# is in use. The folder a disc image was made from is one such: the
+# component that wrote the image lets go of its files only when .NET has
+# collected it, and a virus scanner reads a program that was copied a moment
+# ago. (Seen once: the installer's copy, right after its image was written.)
+function Remove-BusyFolder([string]$path) {
+    $waited = [System.Diagnostics.Stopwatch]::StartNew()
+    while (Test-Path -LiteralPath $path) {
+        try {
+            Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+            return
+        }
+        catch {
+            if ($waited.Elapsed.TotalSeconds -gt 60) { throw }
+            [GC]::Collect()
+            [GC]::WaitForPendingFinalizers()
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
+
 # The Inno Setup compiler, which makes the installer. Installed for the
 # account, with no administrator, by:
 #   winget install --id JRSoftware.InnoSetup.7 -e --custom /CURRENTUSER
@@ -497,7 +518,7 @@ function New-Package {
         $different = @(Compare-DiscImage -Path $iso -Label $label -Top $top -Folders $holds)
     }
     finally {
-        Remove-Item -Recurse -Force $top
+        Remove-BusyFolder $top
     }
     if ($different.Count -gt 0) {
         Remove-Item -Force $iso

@@ -841,6 +841,13 @@ Found on Windows:
     the process.
   - `Find-PrivatePaths` reads a whole file into memory as text: fine for
     a 270 MB image on this machine, slow beyond that.
+  - The folder a disc image is made from cannot always be removed the
+    moment the image is written: the first release build of 0.3.1
+    stopped there ("in use by another process", on the installer's copy;
+    two trial builds an hour earlier had not). The disc writer lets go of
+    its files only when .NET collects it, and a scanner reads a freshly
+    copied program. `Remove-BusyFolder` collects and tries again for up
+    to a minute.
 
 ## Not verified against real infrastructure
 
