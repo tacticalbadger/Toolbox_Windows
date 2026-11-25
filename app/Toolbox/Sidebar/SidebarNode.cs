@@ -42,6 +42,7 @@ internal sealed class SidebarNode : Observable
         this.expansionChanged = expansionChanged;
     }
 
+    /// <summary>A folder's id holds its path, so a folder that moves gets a new node.</summary>
     public string Id { get; }
     public SidebarNodeKind Kind { get; private set; }
     public string GroupTitle { get; private set; } = "";

@@ -40,7 +40,11 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
 
     internal IReadOnlyList<Workspace> Workspaces => workspaces;
 
-    internal Workspace AddWorkspace()
+    /// <summary>
+    /// A new, empty workspace. Its tab goes right after <paramref name="after"/>'s,
+    /// or at the end of the row when none is named.
+    /// </summary>
+    internal Workspace AddWorkspace(Workspace? after = null)
     {
         workspaceCounter++;
         var workspace = new Workspace($"Workspace {workspaceCounter}");
@@ -49,14 +53,23 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
         {
             if (ReferenceEquals(workspace, current)) RefreshCommands();
         };
-        workspace.Panes.OpenConnection = (connection, pane) => Open(connection, pane);
+        workspace.Panes.Emptied += () => WorkspaceEmptied(workspace);
+        workspace.Panes.OpenConnection = (connection, pane) => Open(connection, workspace, pane);
         workspace.Panes.ContextMenuProvider = pane => PaneMenu(workspace, pane);
         workspace.Selected += () => Select(workspace);
         workspace.CloseRequested += () => CloseWorkspace(workspace);
         workspace.RenameRequested += () => RenameWorkspace(workspace);
-        workspaces.Add(workspace);
+        workspace.TitleChanged += () =>
+        {
+            if (ReferenceEquals(workspace, current)) Title = $"{workspace.Title} - Toolbox";
+            NoteTabs();
+        };
+        var index = after is null ? -1 : workspaces.IndexOf(after);
+        index = index < 0 ? workspaces.Count : index + 1;
+        workspaces.Insert(index, workspace);
         WorkspaceHost.Children.Add(workspace.Panes);
-        TabStrip.Children.Add(workspace.Tab);
+        TabStrip.Children.Insert(index, workspace.Tab);
+        NoteTabs();
         return workspace;
     }
 
@@ -69,9 +82,10 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
             other.Panes.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
             other.IsSelected = selected;
         }
-        Title = $"{workspace.Name} - Toolbox";
+        Title = $"{workspace.Title} - Toolbox";
         workspace.Tab.BringIntoView();
         RefreshCommands();
+        NoteTabs();
         // Once the panes are laid out again, hand the keyboard back to the session.
         Dispatcher.BeginInvoke(() =>
         {
@@ -88,14 +102,20 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
 
     private void CloseWorkspace(Workspace workspace)
     {
-        var live = workspace.Panes.LiveSessionCount;
-        if (live > 0 && !Prompts.Confirm($"Close “{workspace.Name}”?",
-                                         $"{live} active session{(live == 1 ? "" : "s")} will be disconnected.", "Close"))
+        var busy = workspace.Panes.SessionsToWarnAbout;
+        if (busy > 0 && !Prompts.Confirm($"Close “{workspace.Title}”?",
+                                         $"{busy} active session{(busy == 1 ? "" : "s")} will be disconnected.", "Close"))
         {
             return;
         }
-        workspace.Panes.TerminateAll();
+        RemoveWorkspace(workspace);
+    }
+
+    private void RemoveWorkspace(Workspace workspace)
+    {
         var index = workspaces.IndexOf(workspace);
+        if (index < 0) return;
+        workspace.Panes.TerminateAll();
         workspaces.Remove(workspace);
         WorkspaceHost.Children.Remove(workspace.Panes);
         TabStrip.Children.Remove(workspace.Tab);
@@ -103,15 +123,41 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
         if (workspaces.Count == 0) AddWorkspace();
         if (ReferenceEquals(current, workspace)) Select(workspaces[Math.Min(index, workspaces.Count - 1)]);
         else RefreshCommands();
+        NoteTabs();
     }
 
-    /// <summary>Also reached by double-clicking the workspace's tab.</summary>
+    /// <summary>
+    /// The last pane of a workspace was closed or moved away. A tab with
+    /// nothing in it has no reason to stay next to others; the only tab does,
+    /// as the place the next session goes.
+    /// </summary>
+    private void WorkspaceEmptied(Workspace workspace)
+    {
+        // Not from inside the click or the move that emptied it, and only if
+        // it is still empty by then.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (workspaces.Count < 2 || !workspaces.Contains(workspace)) return;
+            if (workspace.Panes.Contents.Count > 0 || workspace.Panes.PaneCount != 1) return;
+            RemoveWorkspace(workspace);
+        });
+    }
+
+    /// <summary>
+    /// Also reached by double-clicking the workspace's tab. An empty name
+    /// goes back to naming the tab after its sessions.
+    /// </summary>
     private void RenameWorkspace(Workspace workspace)
     {
-        var name = Prompts.AskText("Rename Workspace", "Double-click a tab to rename it any time.", workspace.Name, "Rename");
-        if (string.IsNullOrWhiteSpace(name)) return;
-        workspace.Name = name.Trim();
-        if (ReferenceEquals(workspace, current)) Title = $"{workspace.Name} - Toolbox";
+        var entered = Prompts.AskText(
+            "Rename Workspace",
+            "Double-click a tab to rename it any time. Leave the name empty to have the tab named after its sessions.",
+            workspace.Title, "Rename");
+        if (entered is null) return;
+        var name = entered.Trim();
+        // Confirming the automatic name unchanged does not pin it.
+        if (workspace.CustomName is null && name == workspace.Title) return;
+        workspace.CustomName = name.Length == 0 ? null : name;
     }
 
     /// <summary>Moves a pane's session into another workspace, keeping it running.</summary>
@@ -127,27 +173,51 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
     internal void MovePaneToNewWorkspace()
     {
         var from = current;
-        var pane = from.Panes.FocusedPane;
-        if (pane.Content is null) return;
-        MovePane(from, pane, AddWorkspace());
+        if (!CanMoveToNewWorkspace) return;
+        MovePane(from, from.Panes.FocusedPane, AddWorkspace(after: from));
     }
+
+    /// <summary>A session that already has its workspace to itself gains nothing from a new one.</summary>
+    private bool CanMoveToNewWorkspace => Panes.FocusedPane.Content is not null && Panes.PaneCount > 1;
 
     /// <summary>Header context menu: where to send the pane, and close.</summary>
     private ContextMenu? PaneMenu(Workspace workspace, PaneView pane)
     {
         if (pane.Content is null) return null;
         var menu = new ContextMenu();
-        menu.Items.Add(MenuEntry("Move to New Workspace", () => MovePane(workspace, pane, AddWorkspace())));
+        if (workspace.Panes.PaneCount > 1)
+        {
+            menu.Items.Add(MenuEntry("Move to New Workspace", () => MovePane(workspace, pane, AddWorkspace(after: workspace))));
+        }
         var others = workspaces.Where(w => !ReferenceEquals(w, workspace)).ToList();
         if (others.Count > 0)
         {
             var submenu = new MenuItem { Header = "Move to Workspace" };
-            foreach (var other in others) submenu.Items.Add(MenuEntry(other.Name, () => MovePane(workspace, pane, other)));
+            foreach (var other in others) submenu.Items.Add(MenuEntry(other.Title, () => MovePane(workspace, pane, other)));
             menu.Items.Add(submenu);
         }
-        menu.Items.Add(new Separator());
+        if (menu.Items.Count > 0) menu.Items.Add(new Separator());
         menu.Items.Add(MenuEntry("Close Pane", () => ClosePane(workspace, pane)));
         return menu;
+    }
+
+    private bool tabsNotePending;
+
+    /// <summary>
+    /// One log line for a burst of changes to the tab row: every tab's name
+    /// and number of sessions, the one in front marked with a star. The
+    /// end-to-end checks read it.
+    /// </summary>
+    private void NoteTabs()
+    {
+        if (tabsNotePending) return;
+        tabsNotePending = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            tabsNotePending = false;
+            Log.Info("tabs: " + string.Join(" | ", workspaces.Select(
+                w => $"{(ReferenceEquals(w, current) ? "*" : "")}{w.Title} ({w.Panes.Contents.Count})")));
+        }, System.Windows.Threading.DispatcherPriority.Background);
     }
 
     private static MenuItem MenuEntry(string title, Action handler)
@@ -159,8 +229,7 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
 
     private void ClosePane(Workspace workspace, PaneView pane)
     {
-        if (pane.Content?.IsLive == true &&
-            !Prompts.Confirm("Close pane?", "The session will be disconnected.", "Close"))
+        if (pane.Content?.CloseWarning is { } warning && !Prompts.Confirm("Close pane?", warning, "Close"))
         {
             return;
         }
@@ -177,6 +246,9 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
     private bool CanBrowseFiles =>
         FocusedConnection is { } connection && (connection.Kind.UsesSsh() || connection.Kind.IsFileTransfer());
 
+    /// <summary>The focused pane's session if its text can be searched (a terminal).</summary>
+    private ISearchablePane? FocusedSearchable => Panes.FocusedPane.Content as ISearchablePane;
+
     private void RefreshCommands()
     {
         if (current is null) return;
@@ -188,23 +260,40 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
     {
         ClosePaneItem.IsEnabled = CanClosePane;
         BrowseFilesItem.IsEnabled = CanBrowseFiles;
+        var searchable = FocusedSearchable is not null;
+        FindItem.IsEnabled = searchable;
+        FindNextItem.IsEnabled = searchable;
+        FindPreviousItem.IsEnabled = searchable;
         FocusNextItem.IsEnabled = Panes.PaneCount > 1;
         FocusPreviousItem.IsEnabled = Panes.PaneCount > 1;
         var hasSession = Panes.FocusedPane.Content is not null;
-        MoveToNewItem.IsEnabled = hasSession;
+        MoveToNewItem.IsEnabled = CanMoveToNewWorkspace;
 
         // Fills the "Move Pane to Workspace" submenu with the other workspaces.
         MoveToMenu.Items.Clear();
         var from = current;
         foreach (var other in workspaces.Where(w => !ReferenceEquals(w, from)))
         {
-            MoveToMenu.Items.Add(MenuEntry(other.Name, () => MovePane(from, from.Panes.FocusedPane, other)));
+            MoveToMenu.Items.Add(MenuEntry(other.Title, () => MovePane(from, from.Panes.FocusedPane, other)));
         }
         if (MoveToMenu.Items.Count == 0)
         {
             MoveToMenu.Items.Add(new MenuItem { Header = "No Other Workspaces", IsEnabled = false });
         }
         MoveToMenu.IsEnabled = hasSession;
+
+        // The profiles of the user's Windows Terminal, as its settings name them now.
+        TerminalProfilesMenu.Items.Clear();
+        foreach (var profile in WindowsTerminal.Profiles())
+        {
+            // An underscore in a name is not an access key.
+            TerminalProfilesMenu.Items.Add(MenuEntry(profile.Name.Replace("_", "__"), () => OpenLocalTerminal(profile.Name)));
+        }
+        TerminalProfilesMenu.IsEnabled = TerminalProfilesMenu.Items.Count > 0;
+        if (TerminalProfilesMenu.Items.Count == 0)
+        {
+            TerminalProfilesMenu.Items.Add(new MenuItem { Header = "No Profiles Found", IsEnabled = false });
+        }
 
         foreach (var item in ThemeMenu.Items.OfType<MenuItem>())
         {
@@ -214,6 +303,35 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
         RequireAuthItem.IsChecked = VaultManager.Shared.RequiresAuthentication;
         RdpGraphicsItem.IsChecked = AppSettings.Shared.RdpFastGraphics;
         RdpClipboardItem.IsChecked = AppSettings.Shared.RdpShareClipboard;
+        // A build that does not look for updates (one made for trying things) says so by greying both out.
+        CheckUpdatesItem.IsEnabled = Updates.Shared.IsActive;
+        AutoUpdatesItem.IsEnabled = Updates.Shared.IsActive;
+        AutoUpdatesItem.IsChecked = Updates.Shared.IsActive && Updates.Shared.ChecksAutomatically;
+    }
+
+    // ----- Help > updates -----
+
+    private async void OnCheckForUpdates(object sender, RoutedEventArgs e) => await Updates.Shared.CheckNowAsync();
+
+    private void OnToggleAutomaticUpdates(object sender, RoutedEventArgs e) =>
+        Updates.Shared.ChecksAutomatically = !Updates.Shared.ChecksAutomatically;
+
+    /// <summary>
+    /// Installing an update restarts the app. With sessions open that is
+    /// asked about first, the way quitting is; false when the user backs out.
+    /// </summary>
+    internal bool ConfirmRestartForUpdate()
+    {
+        var busy = workspaces.Sum(w => w.Panes.SessionsToWarnAbout);
+        return busy == 0 || Prompts.Confirm("Install the update now?",
+            $"{busy} active session{(busy == 1 ? "" : "s")} will be disconnected. Toolbox starts again when the update is in.", "Install");
+    }
+
+    /// <summary>Closes the window for an update that is about to install; the question has been asked.</summary>
+    internal void CloseForUpdate()
+    {
+        closingConfirmed = true;
+        Close();
     }
 
     // ----- View > Remote Desktop -----
@@ -239,10 +357,14 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
     // ----- Menu and toolbar -----
 
     private void OnNewWorkspace(object sender, RoutedEventArgs e) => Select(AddWorkspace());
+    private void OnNewLocalTerminal(object sender, RoutedEventArgs e) => OpenLocalTerminal();
     private void OnNewConnection(object sender, RoutedEventArgs e) => EditConnection(null, null);
     private void OnNewCredential(object sender, RoutedEventArgs e) => EditCredential(null, null);
     private void OnNewProvider(object sender, RoutedEventArgs e) => EditProvider(null, null);
     private void OnBrowseFiles(object sender, RoutedEventArgs e) => BrowseFocused();
+    private void OnFind(object sender, RoutedEventArgs e) => FocusedSearchable?.Find();
+    private void OnFindNext(object sender, RoutedEventArgs e) => FocusedSearchable?.FindNext();
+    private void OnFindPrevious(object sender, RoutedEventArgs e) => FocusedSearchable?.FindPrevious();
     private void OnSyncProviders(object sender, RoutedEventArgs e) => SyncAllProviders();
     private void OnClosePane(object sender, RoutedEventArgs e) => CloseFocusedPane();
     private void OnCloseWorkspace(object sender, RoutedEventArgs e) => CloseWorkspace(current);
@@ -314,8 +436,12 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
         const ModifierKeys altShift = ModifierKeys.Alt | ModifierKeys.Shift;
         const ModifierKeys ctrlAlt = ModifierKeys.Control | ModifierKeys.Alt;
         Shortcut(Key.T, ctrlShift, () => Select(AddWorkspace()));
+        Shortcut(Key.T, ctrlAlt, () => OpenLocalTerminal());
         Shortcut(Key.N, ctrlShift, () => EditConnection(null, null));
-        Shortcut(Key.F, ctrlShift, BrowseFocused);
+        Shortcut(Key.F, ctrlAlt, BrowseFocused);
+        Shortcut(Key.F, ctrlShift, () => FocusedSearchable?.Find());
+        Shortcut(Key.G, ctrlShift, () => FocusedSearchable?.FindNext());
+        Shortcut(Key.G, ctrlAlt, () => FocusedSearchable?.FindPrevious());
         Shortcut(Key.R, ctrlShift, SyncAllProviders);
         Shortcut(Key.W, ctrlShift, CloseFocusedPane);
         Shortcut(Key.W, ctrlAlt, () => CloseWorkspace(current));
@@ -412,9 +538,9 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
     {
         if (!closingConfirmed)
         {
-            var live = workspaces.Sum(w => w.Panes.LiveSessionCount);
-            if (live > 0 && !Prompts.Confirm("Quit Toolbox?",
-                                             $"{live} active session{(live == 1 ? "" : "s")} will be disconnected.", "Quit"))
+            var busy = workspaces.Sum(w => w.Panes.SessionsToWarnAbout);
+            if (busy > 0 && !Prompts.Confirm("Quit Toolbox?",
+                                             $"{busy} active session{(busy == 1 ? "" : "s")} will be disconnected.", "Quit"))
             {
                 e.Cancel = true;
                 return;
@@ -431,5 +557,7 @@ internal partial class MainWindow : Window, Sidebar.ISidebarHost
             Maximized = WindowState == WindowState.Maximized,
         };
         foreach (var workspace in workspaces) workspace.Panes.TerminateAll();
+        // Local terminals are another program's windows: they get a moment to close.
+        LocalTerminalPane.FinishAll(TimeSpan.FromSeconds(1.5));
     }
 }

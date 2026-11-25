@@ -7,21 +7,27 @@ using System.Windows.Media;
 namespace Toolbox.Workspaces;
 
 /// <summary>
-/// One workspace: a named pane layout, shown as a tab. Any mix of sessions
-/// can live in any of them.
+/// One workspace: a pane layout, shown as a tab. A session opens in a
+/// workspace of its own; any mix of sessions can be brought together in one.
 /// </summary>
 internal sealed class Workspace
 {
     private readonly TextBlock label = new();
     private readonly Border indicator = new();
-    private string name;
+    /// <summary>What the workspace is called while nothing is in it ("Workspace 3").</summary>
+    private readonly string placeholderName;
+    private string? customName;
+    private string title;
 
     public Workspace(string name)
     {
-        this.name = name;
+        placeholderName = name;
+        title = name;
         Panes = new PaneContainer();
         Tab = BuildTab();
         IsSelected = false;
+        Panes.ContentChanged += RefreshTitle;
+        Panes.LayoutChanged += RefreshTitle;
     }
 
     public PaneContainer Panes { get; }
@@ -32,16 +38,44 @@ internal sealed class Workspace
     public event Action? Selected;
     public event Action? CloseRequested;
     public event Action? RenameRequested;
+    public event Action? TitleChanged;
 
-    public string Name
+    /// <summary>
+    /// The tab's name: the user's, else the sessions in it, else the
+    /// placeholder.
+    /// </summary>
+    public string Title => title;
+
+    /// <summary>
+    /// The name the user gave the workspace. Without one (null) its tab is
+    /// named after the sessions in it.
+    /// </summary>
+    public string? CustomName
     {
-        get => name;
+        get => customName;
         set
         {
-            name = value;
-            label.Text = value;
-            AutomationProperties.SetName(Tab, value);
+            customName = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            RefreshTitle();
         }
+    }
+
+    private void RefreshTitle()
+    {
+        var wanted = customName ?? TitleFor(Panes.Contents.Select(c => c.TabTitle).ToList()) ?? placeholderName;
+        if (wanted == title) return;
+        title = wanted;
+        label.Text = wanted;
+        AutomationProperties.SetName(Tab, wanted);
+        TitleChanged?.Invoke();
+    }
+
+    /// <summary>"web01", "web01, db02", "web01, db02 + 3"; null for no sessions.</summary>
+    internal static string? TitleFor(IReadOnlyList<string> sessions)
+    {
+        if (sessions.Count == 0) return null;
+        var shown = string.Join(", ", sessions.Take(2));
+        return sessions.Count > 2 ? $"{shown} + {sessions.Count - 2}" : shown;
     }
 
     public bool IsSelected
@@ -59,7 +93,7 @@ internal sealed class Workspace
 
     private Border BuildTab()
     {
-        label.Text = name;
+        label.Text = title;
         label.VerticalAlignment = VerticalAlignment.Center;
         label.Margin = new Thickness(12, 0, 6, 0);
         label.MaxWidth = 200;
@@ -102,7 +136,7 @@ internal sealed class Workspace
             ToolTip = "Double-click to rename",
         };
         AutomationProperties.SetAutomationId(tab, "WorkspaceTab");
-        AutomationProperties.SetName(tab, name);
+        AutomationProperties.SetName(tab, title);
         tab.MouseLeftButtonDown += (_, e) =>
         {
             if (e.ClickCount == 2) RenameRequested?.Invoke();

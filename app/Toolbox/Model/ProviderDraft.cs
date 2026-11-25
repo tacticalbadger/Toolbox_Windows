@@ -126,9 +126,6 @@ internal sealed class ProviderDraft : FormDraft
     private bool acceptInvalidCerts;
 
     public string Id { get; set; } = "";
-
-    /// <summary>Name of the provider's own folder node; follows <see cref="Name"/> for new ones.</summary>
-    public string Leaf { get; private set; } = "";
     public ulong? LastSyncEpoch { get; private set; }
     public string? LastStatus { get; private set; }
 
@@ -143,7 +140,6 @@ internal sealed class ProviderDraft : FormDraft
         Id = provider.Id;
         name = provider.Name;
         parent = FolderPath.Parent(provider.Folder) ?? "";
-        Leaf = FolderPath.Leaf(provider.Folder);
         autoRefreshMinutes = (int)provider.AutoRefreshMinutes;
         LastSyncEpoch = provider.LastSyncEpoch;
         LastStatus = provider.LastStatus;
@@ -186,7 +182,7 @@ internal sealed class ProviderDraft : FormDraft
     public bool IsNew => Id.Length == 0;
     public string Name { get => name; set => SetField(ref name, value); }
 
-    /// <summary>Folder the provider sits in; its own node is named after it.</summary>
+    /// <summary>Folder the provider sits in. Its own folder is this plus <see cref="Name"/>.</summary>
     public string Parent { get => parent; set => SetField(ref parent, value); }
     public ProviderKindChoice Kind { get => kind; set => SetField(ref kind, value); }
     public int AutoRefreshMinutes { get => autoRefreshMinutes; set => SetField(ref autoRefreshMinutes, Math.Clamp(value, 0, 1440)); }
@@ -222,6 +218,7 @@ internal sealed class ProviderDraft : FormDraft
         get
         {
             if (string.IsNullOrWhiteSpace(name)) return "Give the provider a name.";
+            if (name.Contains('/')) return "The name can't contain “/”. Use Location for the folder the provider is in.";
             if (kind != ProviderKindChoice.ActiveDirectory) return null;
             if (string.IsNullOrWhiteSpace(server)) return "Enter the domain controller to query.";
             if (string.IsNullOrWhiteSpace(searchBase)) return "Enter the search base, e.g. DC=corp,DC=example.";
@@ -299,13 +296,13 @@ internal sealed class ProviderDraft : FormDraft
                 AcceptInvalidCerts: acceptInvalidCerts);
         }
         var trimmedName = name.Trim();
-        var node = string.IsNullOrWhiteSpace(Leaf) ? trimmedName : Leaf.Trim();
         var location = parent.Trim();
         return new Provider(
             Id: Id,
             Name: trimmedName,
             Kind: stored,
-            Folder: location.Length == 0 ? node : $"{location}/{node}",
+            // The provider's folder carries its name; the store sees to that as well.
+            Folder: location.Length == 0 ? trimmedName : $"{location}/{trimmedName}",
             AutoRefreshMinutes: (uint)Math.Max(autoRefreshMinutes, 0),
             LastSyncEpoch: LastSyncEpoch,
             LastStatus: LastStatus);

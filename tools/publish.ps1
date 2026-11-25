@@ -6,9 +6,12 @@
 .DESCRIPTION
         tools\publish.ps1 [-Replace] [-Prerelease] [-DryRun]
 
-    Tag v<version> (from the VERSION file), with every
-    build\release\Toolbox-<version>-win-<arch>.zip and SHA256SUMS attached,
-    so the app can be downloaded from the repo's Releases page.
+    Tag v<version> (from the VERSION file), with both
+    build\release\Toolbox-<version>-win-<arch>.zip, SHA256SUMS and the update
+    feed (update.json, update.json.sig from "tools\build.ps1 feed") attached,
+    so the app can be downloaded from the repo's Releases page and installed
+    copies are offered the version. Publishing is the moment they start
+    being offered it.
 
     Before anything is sent: the checksums are verified, the packages must
     have been built from the current commit (their build number is the commit
@@ -90,6 +93,29 @@ foreach ($package in $packages) {
     Write-Host ("{0}  {1:N0} MB  build {2}" -f $package.Name, ($package.Length / 1MB), $fileVersion.FilePrivatePart)
 }
 
+# The update feed. Installed copies read update.json from the newest release:
+# a release without it, or with one that is not about exactly these files,
+# stops updates for everyone until the next release, and nobody is told.
+$FeedPath = Join-Path $Out 'update.json'
+$FeedSignaturePath = "$FeedPath.sig"
+if (-not (Test-Path $FeedPath) -or -not (Test-Path $FeedSignaturePath)) {
+    throw 'no update feed in build\release; run: tools\build.ps1 feed (after packaging both architectures)'
+}
+$feed = [System.IO.File]::ReadAllText($FeedPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+if ($feed.version -ne $Version -or [int]$feed.build -ne $commitCount) {
+    throw "update.json is for $($feed.version) build $($feed.build), not $Version build $commitCount; run: tools\build.ps1 feed"
+}
+foreach ($rid in 'win-arm64', 'win-x64') {
+    $listed = $feed.packages.$rid
+    $package = $packages | Where-Object { $_.Name -eq "Toolbox-$Version-$rid.zip" } | Select-Object -First 1
+    if ($null -eq $listed -or $null -eq $package) { throw "the release needs a package for $rid, and update.json has to list it" }
+    if ($listed.file -ne $package.Name -or [long]$listed.size -ne $package.Length -or $listed.sha256 -ne $expected[$package.Name]) {
+        throw "update.json does not describe $($package.Name) as it is now; run: tools\build.ps1 feed"
+    }
+}
+# Signed with the key whose public half is in the app's source, which is the key these packages trust.
+& (Join-Path $PSScriptRoot 'update-key.ps1') verify -File $FeedPath
+
 # The tag points at the commit the release was built from: it has to be on GitHub.
 Invoke-Git fetch -q origin | Out-Null
 & git -C $Root merge-base --is-ancestor $head origin/main 2>$null
@@ -112,8 +138,10 @@ Toolbox is a Windows client for SSH, RDP and file transfer, with split panes, wo
 ## Install
 
 1. Download the zip for your PC below: **win-x64** for most PCs, **win-arm64** for Windows on ARM (Settings > System > About shows the system type).
-2. Right-click the zip, choose **Properties**, tick **Unblock** and press OK. Then extract it anywhere, for example ``%LOCALAPPDATA%\Programs``.
+2. Right-click the zip, choose **Properties**, tick **Unblock** and press OK. Then extract it to a folder of your own, for example ``%LOCALAPPDATA%\Programs``.
 3. Run **Toolbox.exe** from the extracted folder.
+
+From 0.3.0 on Toolbox updates itself: it looks for a new version once a day and under **Help > Check for Updates**, shows what changed, and installs it when you agree. It can only do that in a folder it may write to, so not under Program Files.
 
 This build is **not code-signed yet**. If Windows shows "Windows protected your PC", choose **More info**, then **Run anyway**. Nothing needs installing: the .NET runtime is inside the folder. Requires Windows 10 version 2004 or newer, or Windows 11; on Windows 10 the Microsoft Edge WebView2 Runtime must be present (it is part of Windows 11).
 
@@ -135,7 +163,7 @@ $title = "Toolbox $Version"
 if ($DryRun) {
     Step "Dry run: would publish $Tag to $Owner/$Repo at $($head.Substring(0, 7))"
     Write-Host "title: $title"
-    Write-Host "files: $(($packages | ForEach-Object { $_.Name }) -join ', '), SHA256SUMS"
+    Write-Host "files: $(($packages | ForEach-Object { $_.Name }) -join ', '), SHA256SUMS, update.json, update.json.sig"
     Write-Host '--- notes ---'
     Write-Host $notes
     return
@@ -211,6 +239,9 @@ catch { if ((Get-StatusCode $_) -ne 404) { throw "GitHub refused the request ($(
 function Send-Files($release) {
     foreach ($package in $packages) { Send-Asset $release $package 'application/zip' }
     Send-Asset $release (Get-Item $SumsPath) 'text/plain'
+    # Last: from the moment the release is out, these two tell installed copies about it.
+    Send-Asset $release (Get-Item $FeedPath) 'application/json'
+    Send-Asset $release (Get-Item $FeedSignaturePath) 'text/plain'
 }
 
 if ($null -ne $existing) {
@@ -251,6 +282,6 @@ else {
 
 $published = Invoke-GitHub 'Get' "$api/releases/tags/$Tag"
 $names = @($published.assets | ForEach-Object { $_.name })
-$missing = @(@($packages | ForEach-Object { $_.Name }) + 'SHA256SUMS' | Where-Object { $names -notcontains $_ })
+$missing = @(@($packages | ForEach-Object { $_.Name }) + 'SHA256SUMS' + 'update.json' + 'update.json.sig' | Where-Object { $names -notcontains $_ })
 if ($missing.Count -gt 0) { throw "release $Tag is out, but GitHub does not list: $($missing -join ', ')" }
 Write-Host "published: $($published.html_url) ($($names.Count) files)"

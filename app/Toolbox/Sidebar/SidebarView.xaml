@@ -27,6 +27,8 @@
         <TreeView x:Name="Tree" BorderThickness="0" Background="Transparent" Padding="2,0,0,0"
                   AutomationProperties.AutomationId="SidebarTree" AutomationProperties.Name="Connections"
                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                  VirtualizingStackPanel.IsVirtualizing="True" VirtualizingStackPanel.VirtualizationMode="Standard"
+                  ScrollViewer.CanContentScroll="True"
                   PreviewMouseLeftButtonDown="OnTreeMouseDown" PreviewMouseMove="OnTreeMouseMove"
                   PreviewMouseLeftButtonUp="OnTreeMouseUp" PreviewMouseRightButtonDown="OnTreeRightDown"
                   MouseRightButtonUp="OnTreeRightUp" PreviewMouseDoubleClick="OnTreeDoubleClick"
@@ -35,6 +37,13 @@
                 <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                     <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
                     <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                    <Setter Property="ItemsPanel">
+                        <Setter.Value>
+                            <ItemsPanelTemplate>
+                                <VirtualizingStackPanel />
+                            </ItemsPanelTemplate>
+                        </Setter.Value>
+                    </Setter>
                     <Setter Property="AutomationProperties.AutomationId" Value="{Binding Id}" />
                     <Setter Property="AutomationProperties.Name" Value="{Binding Title}" />
                     <Setter Property="AutomationProperties.HelpText" Value="{Binding KindLabel}" />

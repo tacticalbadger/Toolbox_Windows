@@ -17,12 +17,34 @@ internal partial class MainWindow
 
     public void BrowseFiles(Connection connection) => OpenFiles(connection);
 
-    /// <summary>Opens a connection in <paramref name="target"/>, or in the pane a new session should use.</summary>
-    internal async void Open(Connection connection, PaneView? target = null)
+    // ----- Where sessions go -----
+
+    /// <summary>
+    /// Where a new session goes when nobody chose a pane for it: an empty
+    /// pane of the workspace in front, otherwise a workspace tab of its own
+    /// at the end of the row, so tabs stay in the order the sessions were
+    /// opened. Putting sessions side by side is left to the user: Split
+    /// Right or Down and open into the empty pane, drop a connection on a
+    /// pane's edge, or move a pane to another workspace. (The owner asked for
+    /// this on the Mac, 2026-11-24. Do not bring back automatic splits.)
+    /// </summary>
+    private (Workspace Workspace, PaneView Pane) PlaceForNewSession()
+    {
+        if (current.Panes.EmptyPane is { } empty) return (current, empty);
+        var workspace = AddWorkspace();
+        Select(workspace);
+        return (workspace, workspace.Panes.FocusedPane);
+    }
+
+    /// <summary>
+    /// Opens a connection in <paramref name="target"/>, a pane of
+    /// <paramref name="workspace"/>; without one, where new sessions go.
+    /// </summary>
+    internal async void Open(Connection connection, Workspace? workspace = null, PaneView? target = null)
     {
         if (connection.Kind.IsFileTransfer())
         {
-            OpenFiles(connection, target);
+            OpenFiles(connection, workspace, target);
             return;
         }
         if (connection.Kind == ConnectionKind.Vnc)
@@ -32,8 +54,9 @@ internal partial class MainWindow
             return;
         }
 
-        var panes = Panes;
-        var pane = target ?? panes.PaneForNewSession();
+        var place = workspace is not null && target is not null ? (Workspace: workspace, Pane: target) : PlaceForNewSession();
+        var panes = place.Workspace.Panes;
+        var pane = place.Pane;
         if (connection.Kind == ConnectionKind.Rdp)
         {
             var desktop = new RdpPane(connection);
@@ -83,7 +106,7 @@ internal partial class MainWindow
     /// Opens a file browser: SFTP for SSH and SFTP connections, FTP or FTPS
     /// for those kinds.
     /// </summary>
-    internal async void OpenFiles(Connection connection, PaneView? target = null)
+    internal async void OpenFiles(Connection connection, Workspace? workspace = null, PaneView? target = null)
     {
         if (!connection.Kind.UsesSsh() && !connection.Kind.IsFileTransfer())
         {
@@ -91,8 +114,9 @@ internal partial class MainWindow
                          $"This connection is {connection.Kind.Label()}. Create a File Transfer connection for the host instead.");
             return;
         }
-        var panes = Panes;
-        var pane = target ?? panes.PaneForNewSession();
+        var place = workspace is not null && target is not null ? (Workspace: workspace, Pane: target) : PlaceForNewSession();
+        var panes = place.Workspace.Panes;
+        var pane = place.Pane;
         var files = new FileBrowserPane(connection);
         pane.SetContent(files);
         panes.SetFocus(pane.Id, activate: true);
@@ -119,6 +143,19 @@ internal partial class MainWindow
         {
             files.Failed(Errors.Describe(e));
         }
+    }
+
+    /// <summary>
+    /// Opens a terminal on this PC: a window of the user's Windows Terminal
+    /// with <paramref name="profile"/> (null: its default profile), shown in
+    /// a pane.
+    /// </summary>
+    internal void OpenLocalTerminal(string? profile = null)
+    {
+        var place = PlaceForNewSession();
+        var terminal = new LocalTerminalPane(profile);
+        place.Pane.SetContent(terminal);
+        place.Workspace.Panes.SetFocus(place.Pane.Id, activate: true);
     }
 
     public void EditConnection(Connection? connection, string? folder)
@@ -258,8 +295,75 @@ internal partial class MainWindow
             else OpenFiles(connection);
         }
 
-        // Move the focused pane into a fresh workspace tab.
+        // A terminal on this PC, the way File > New Local Terminal opens one (may repeat).
+        foreach (var _ in args.Where(a => a == "--local-terminal")) OpenLocalTerminal();
+
+        // The same with one of Windows Terminal's profiles, by name.
+        if (App.Value("--local-terminal-profile") is { } terminalProfile) OpenLocalTerminal(terminalProfile);
+
+        // Move the focused pane into a fresh workspace tab (it has to share
+        // its workspace with another pane, or there is nothing to gain).
         if (App.HasFlag("--demo-move")) After(1.5, MovePaneToNewWorkspace);
+
+        // Bring every other workspace's sessions into the first one, the way
+        // Move Pane to Workspace does.
+        if (App.HasFlag("--demo-merge"))
+        {
+            After(3, () =>
+            {
+                var first = workspaces[0];
+                foreach (var other in workspaces.Skip(1).ToList())
+                {
+                    while (other.Panes.Panes.FirstOrDefault(p => p.Content is not null) is { } pane) MovePane(other, pane, first);
+                }
+            });
+        }
+
+        // Show the nth workspace tab (from 1) after 3 s and the last one
+        // again after 6 s, to see what a session shows after its tab was out
+        // of sight.
+        if (int.TryParse(App.Value("--demo-select-tab"), out var number))
+        {
+            After(3, () =>
+            {
+                if (number < 1 || number > workspaces.Count)
+                {
+                    Log.Warn($"--demo-select-tab: there is no tab {number}");
+                    return;
+                }
+                var back = workspaces[^1];
+                Select(workspaces[number - 1]);
+                After(3, () => { if (workspaces.Contains(back)) Select(back); });
+            });
+        }
+
+        // Search the focused terminal for a text, the way Edit > Find does
+        // once something is typed into its bar, and log what was found.
+        if (App.Value("--demo-find") is { } findText)
+        {
+            After(4, () =>
+            {
+                if (FocusedSearchable is { } searchable) searchable.FindDemo(findText);
+                else Log.Warn("--demo-find: the focused pane is not a terminal");
+            });
+        }
+
+        // Rename a provider the way its editor would, and log where its
+        // folder went (or why it stayed).
+        if (App.Values("--demo-provider-rename", 2) is [var renameId, var renameTo])
+        {
+            After(3, () => _ = DemoProviderRenameAsync(renameId, renameTo));
+        }
+
+        // Rename or move a folder.
+        if (App.Values("--demo-folder-rename", 2) is [var folderFrom, var folderTo])
+        {
+            After(3, () =>
+            {
+                try { Log.Info($"folder-rename: {folderFrom} -> {model.RenameFolder(folderFrom, folderTo)}"); }
+                catch (Exception e) { Log.Warn($"folder-rename: refused: {Errors.Describe(e)}"); }
+            });
+        }
 
         // Close the focused pane shortly after launch, the way its close button would.
         if (App.HasFlag("--demo-close")) After(3, () => Panes.ClosePane(Panes.FocusedPane.Id));
@@ -315,6 +419,31 @@ internal partial class MainWindow
         catch (Exception e)
         {
             Log.Warn($"vault unlock failed: {e.Message}");
+        }
+    }
+
+    private async Task DemoProviderRenameAsync(string wanted, string name)
+    {
+        var provider = model.Providers.FirstOrDefault(p => p.Id == wanted || p.Name == wanted);
+        if (provider is null)
+        {
+            Log.Warn($"provider-rename: no provider with id {wanted}");
+            return;
+        }
+        var draft = new ProviderDraft(provider, model) { Name = name };
+        if (draft.ValidationError is { } problem)
+        {
+            Log.Warn($"provider-rename: refused by the editor: {problem}");
+            return;
+        }
+        try
+        {
+            var stored = await model.SaveProviderAsync(draft);
+            Log.Info($"provider-rename: {provider.Folder} -> {stored.Folder}, named {stored.Name}");
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"provider-rename: refused: {Errors.Describe(e)}");
         }
     }
 

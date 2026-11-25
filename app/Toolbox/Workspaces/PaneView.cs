@@ -29,6 +29,9 @@ internal sealed class PaneView : Border
     /// <summary>Context menu for the header (move to workspace, close).</summary>
     public Func<ContextMenu?>? ContextMenuProvider { get; set; }
 
+    /// <summary>The session came, went, or changed its title.</summary>
+    public event Action? ContentChanged;
+
     private readonly Grid header = new();
     private readonly Ellipse statusDot = new() { Width = 8, Height = 8 };
     private readonly TextBlock titleLabel = new();
@@ -128,6 +131,7 @@ internal sealed class PaneView : Border
             header.Visibility = Visibility.Collapsed;
             placeholder.Visibility = Visibility.Visible;
             titleLabel.Text = "";
+            ContentChanged?.Invoke();
             return;
         }
 
@@ -140,11 +144,14 @@ internal sealed class PaneView : Border
         newContent.SessionEnded += OnSessionEnded;
         host.Children.Add(newContent.View);
         RefreshStatus();
+        ContentChanged?.Invoke();
     }
 
     private void OnTitleChanged()
     {
-        if (Content is not null) titleLabel.Text = Content.Title;
+        if (Content is null) return;
+        titleLabel.Text = Content.Title;
+        ContentChanged?.Invoke();
     }
 
     private void OnContentFocus()
@@ -301,7 +308,7 @@ internal sealed class PaneView : Border
 
     private void BuildPlaceholder()
     {
-        placeholder.Text = "No session\n\nDouble-click a connection in the sidebar, drag one here,\nor press Ctrl+Shift+N to create one.";
+        placeholder.Text = "No session\n\nDouble-click a connection in the sidebar, drag one here,\nor press Ctrl+Shift+N to create one. Ctrl+Alt+T opens a terminal on this PC.";
         placeholder.TextAlignment = TextAlignment.Center;
         placeholder.TextWrapping = TextWrapping.Wrap;
         placeholder.FontSize = 13;

@@ -25,6 +25,12 @@ internal sealed class PaneContainer : Panel, IDragTarget
     /// <summary>Raised when panes come, go, move or change focus.</summary>
     public event Action? LayoutChanged;
 
+    /// <summary>A session came, went, or changed its title.</summary>
+    public event Action? ContentChanged;
+
+    /// <summary>The workspace's last pane was closed or moved away: nothing is left in it.</summary>
+    public event Action? Emptied;
+
     /// <summary>Opens a connection in a pane chosen by a drop.</summary>
     public Action<Connection, PaneView>? OpenConnection { get; set; }
 
@@ -74,14 +80,27 @@ internal sealed class PaneContainer : Panel, IDragTarget
         }
     }
 
-    public int LiveSessionCount => panes.Values.Count(p => p.Content?.IsLive == true);
+    /// <summary>
+    /// Sessions that closing the workspace would interrupt (an idle local
+    /// shell is live, but nothing is lost by closing it).
+    /// </summary>
+    public int SessionsToWarnAbout => panes.Values.Count(p => p.Content?.CloseWarning is not null);
+
+    /// <summary>The sessions, in the order of the layout.</summary>
+    public IReadOnlyList<IPaneContent> Contents =>
+        tree.Leaves.Select(id => panes[id].Content).OfType<IPaneContent>().ToList();
+
+    /// <summary>A pane with nothing in it, the focused one first.</summary>
+    public PaneView? EmptyPane =>
+        FocusedPane.Content is null ? FocusedPane : Panes.FirstOrDefault(p => p.Content is null);
 
     /// <summary>
-    /// The pane a new session should open in: the focused one if it is
-    /// empty, otherwise a fresh pane split to the right of it.
+    /// The pane a session moved here from another workspace goes in: an
+    /// empty one, otherwise a fresh pane split to the right of the focused
+    /// one. (A new session never splits by itself: see the window's
+    /// PlaceForNewSession.)
     /// </summary>
-    public PaneView PaneForNewSession() =>
-        FocusedPane.Content is null ? FocusedPane : InsertPane(FocusedPane.Id, PaneSide.Right);
+    public PaneView PaneForAdoptedSession() => EmptyPane ?? InsertPane(FocusedPane.Id, PaneSide.Right);
 
     public PaneView Split(SplitAxis axis) =>
         InsertPane(FocusedPane.Id, axis == SplitAxis.Horizontal ? PaneSide.Right : PaneSide.Bottom);
@@ -97,16 +116,27 @@ internal sealed class PaneContainer : Panel, IDragTarget
         return pane;
     }
 
-    /// <summary>Closes a pane's session. The last remaining pane is emptied, not removed.</summary>
+    /// <summary>
+    /// Closes a pane's session. The last remaining pane is emptied, not
+    /// removed, and the workspace is told that nothing is left in it.
+    /// </summary>
     public void ClosePane(Guid id)
     {
         if (!panes.TryGetValue(id, out var pane)) return;
+        var hadSession = pane.Content is not null;
         pane.SetContent(null);
+        if (!Remove(pane) && hadSession) Emptied?.Invoke();
+    }
+
+    /// <summary>Takes a pane out of the layout, unless it is the only one. Returns whether it was removed.</summary>
+    private bool Remove(PaneView pane)
+    {
+        var id = pane.Id;
         var order = tree.Leaves;
         if (order.Count <= 1)
         {
             SetFocus(id, activate: true);
-            return;
+            return false;
         }
         var index = Math.Max(0, order.ToList().IndexOf(id));
         tree = tree.Removing(id) ?? new PaneTree.Leaf(id);
@@ -121,6 +151,7 @@ internal sealed class PaneContainer : Panel, IDragTarget
         Children.Remove(pane);
         Rebuild();
         SetFocus(next, activate: focusMoved);
+        return true;
     }
 
     public void FocusNeighbor(int delta)
@@ -150,14 +181,14 @@ internal sealed class PaneContainer : Panel, IDragTarget
     public IPaneContent? Lift(PaneView pane)
     {
         var content = pane.TakeContent();
-        ClosePane(pane.Id);
+        if (!Remove(pane) && content is not null) Emptied?.Invoke();
         return content;
     }
 
     /// <summary>Places a session arriving from another workspace.</summary>
     public void Adopt(IPaneContent content)
     {
-        var pane = PaneForNewSession();
+        var pane = PaneForAdoptedSession();
         pane.SetContent(content);
         SetFocus(pane.Id, activate: true);
     }
@@ -171,6 +202,7 @@ internal sealed class PaneContainer : Panel, IDragTarget
         pane.CloseRequested += () => ClosePane(id);
         pane.DragRequested += _ => DragController.Begin(pane, new DragPayload { PaneId = id });
         pane.ContextMenuProvider = () => ContextMenuProvider?.Invoke(pane);
+        pane.ContentChanged += () => ContentChanged?.Invoke();
         panes[id] = pane;
         Children.Add(pane);
         return pane;

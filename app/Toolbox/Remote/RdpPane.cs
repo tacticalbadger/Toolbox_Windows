@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Forms.Integration;
 using System.Windows.Media;
@@ -666,4 +667,19 @@ internal sealed class RdpPane : Grid, IPaneContent
         isLive = value;
         StateChanged?.Invoke();
     }
+
+    // ----- Accessibility -----
+
+    private static readonly bool ExposesControl = App.HasFlag("--rdp-expose-control");
+
+    /// <summary>
+    /// To accessibility tools the pane is one element, without the Remote
+    /// Desktop control's own windows: with those in the tree, typing
+    /// elsewhere in the window loses keys (see <see cref="NativePanePeer"/>).
+    /// Nothing is lost by leaving the control out: what it shows is a picture
+    /// of another computer's screen. <c>--rdp-expose-control</c> puts it
+    /// back, to see the difference.
+    /// </summary>
+    protected override AutomationPeer OnCreateAutomationPeer() =>
+        ExposesControl ? base.OnCreateAutomationPeer() : new NativePanePeer(this, () => "Remote desktop: " + title);
 }

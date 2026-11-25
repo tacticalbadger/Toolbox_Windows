@@ -48,10 +48,10 @@ internal sealed class ProviderSync
             }
             var result = await AppModel.Shared.Store.SyncProvider(provider.Id, bind);
             AppModel.Shared.Reload();
-            Log.Info($"provider {provider.Name}: synced, {result.Connections} connections, {result.Credentials} credentials, {result.Warnings.Length} warnings");
+            Log.Info($"provider {CurrentName(provider)}: synced, {result.Connections} connections, {result.Credentials} credentials, {result.Warnings.Length} warnings");
             if (interactive && result.Warnings.Length > 0)
             {
-                Prompts.Info($"{provider.Name} synced with warnings", string.Join("\n\n", result.Warnings));
+                Prompts.Info($"{CurrentName(provider)} synced with warnings", string.Join("\n\n", result.Warnings));
             }
             return result;
         }
@@ -62,13 +62,19 @@ internal sealed class ProviderSync
             {
                 return null;
             }
+            // Deleted while it ran: there is nothing left to report on.
+            if (AppModel.Shared.Provider(provider.Id) is null)
+            {
+                Log.Info($"provider {provider.Name}: deleted while it synced; the results were dropped");
+                return null;
+            }
             if (interactive)
             {
-                Prompts.Error($"Couldn't sync {provider.Name}", Errors.Describe(error));
+                Prompts.Error($"Couldn't sync {CurrentName(provider)}", Errors.Describe(error));
             }
             else
             {
-                Log.Warn($"provider {provider.Name} auto-sync failed: {Errors.Describe(error)}");
+                Log.Warn($"provider {CurrentName(provider)} auto-sync failed: {Errors.Describe(error)}");
             }
             return null;
         }
@@ -78,6 +84,10 @@ internal sealed class ProviderSync
             Changed?.Invoke();
         }
     }
+
+    /// <summary>The provider's name now; it can be renamed while a sync runs.</summary>
+    private static string CurrentName(Provider provider) =>
+        AppModel.Shared.Provider(provider.Id)?.Name ?? provider.Name;
 
     /// <summary>(Re)arms periodic refresh for providers that want it.</summary>
     public void ScheduleAutoRefresh()

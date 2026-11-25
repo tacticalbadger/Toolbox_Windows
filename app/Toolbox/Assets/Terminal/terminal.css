@@ -15,3 +15,68 @@ html, body {
   bottom: 2px;
   left: 6px;
 }
+
+/* The find bar sits over the top right corner of the text. */
+#find {
+  position: absolute;
+  top: 6px;
+  right: 22px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 4px 4px 6px;
+  border: 1px solid #5a5a5a;
+  border-radius: 6px;
+  background-color: #2b2b2b;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+  font: 13px "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  color: #e6e6e6;
+}
+
+#find[hidden] {
+  display: none;
+}
+
+#find-text {
+  width: 190px;
+  padding: 3px 6px;
+  border: 1px solid #5a5a5a;
+  border-radius: 4px;
+  outline: none;
+  background-color: #1e1e1e;
+  color: inherit;
+  font: inherit;
+}
+
+#find-text:focus {
+  border-color: #60cdff;
+}
+
+#find-count {
+  min-width: 64px;
+  padding: 0 6px;
+  color: #b0b0b0;
+  text-align: center;
+  white-space: nowrap;
+}
+
+#find.none #find-count {
+  color: #ff9a8a;
+}
+
+#find button {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+#find button:hover {
+  background-color: #454545;
+}

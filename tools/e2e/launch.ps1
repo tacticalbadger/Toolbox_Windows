@@ -8,16 +8,23 @@
         tools\e2e\launch.ps1 -Exe build\release\Toolbox-0.1.0-win-x64\Toolbox.exe --connect echo
 
     The run uses the fixture's store, vault, vault key, settings (owner check
-    off), known_hosts, log and WebView2 profile; the real app data is not
-    touched. A previous instance started from the same build is closed first.
-    -Exe runs another build than build\app, such as a packaged one.
+    off), known_hosts, log, WebView2 profile and updates folder; the real app
+    data is not touched. A previous instance started from the same build is
+    closed first. -Exe runs another build than build\app, such as a packaged
+    one.
 
-    App arguments: --connect <id>, --files <id> (both repeatable),
-    --expand-all, --demo-move, --demo-close, --demo-split,
-    --edit-connection <id|new>, --edit-credential <id|new>,
-    --edit-provider <id|new>, --set-folder-credential <path>,
-    --demo-credential-search <text>, --demo-provider-account <provider-id>,
-    --unlock-vault, --assume-keyboard.
+    App arguments: --connect <id>, --files <id>, --local-terminal (all
+    repeatable), --local-terminal-profile <name>, --expand-all, --demo-move,
+    --demo-merge, --demo-select-tab <n>, --demo-close, --demo-split,
+    --demo-find <text>, --edit-connection <id|new>,
+    --edit-credential <id|new>, --edit-provider <id|new>,
+    --set-folder-credential <path>, --demo-credential-search <text>,
+    --demo-provider-account <provider-id>,
+    --demo-provider-rename <provider-id> <name>,
+    --demo-folder-rename <path> <new path>, --unlock-vault,
+    --assume-keyboard, --rdp-expose-control, and the update rehearsal's
+    --updater-feed <folder|github>, --updater-key <public key>,
+    --updater-pretend-build <n>, --demo-update, --demo-update-install.
 #>
 [CmdletBinding()]
 param(
@@ -79,6 +86,7 @@ $overrides = @{
     TOOLBOX_SETTINGS_PATH  = Join-Path $Fixture 'settings.json'
     TOOLBOX_LOG_PATH       = Join-Path $Fixture 'toolbox.log'
     TOOLBOX_WEBVIEW_DATA   = Join-Path $Fixture 'webview'
+    TOOLBOX_UPDATES_DIR    = Join-Path $Fixture 'updates'
 }
 $previous = @{}
 foreach ($name in $overrides.Keys) {

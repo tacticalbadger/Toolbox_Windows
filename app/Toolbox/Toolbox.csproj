@@ -62,4 +62,10 @@
     <InternalsVisibleTo Include="Toolbox.Tests" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(ToolboxPackaged)' == 'true'">
+    <!-- Set by "tools\build.ps1 package": a build made for handing out, which
+         looks for updates. Any other build does not (AppInfo.IsPackaged). -->
+    <AssemblyMetadata Include="ToolboxPackaged" Value="true" />
+  </ItemGroup>
+
 </Project>

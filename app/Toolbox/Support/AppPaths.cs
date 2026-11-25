@@ -19,6 +19,13 @@ internal static class AppPaths
     public static string StorePath { get; } =
         Override("TOOLBOX_STORE_PATH") ?? Path.Combine(DataDirectory, "connections.json");
 
+    /// <summary>
+    /// False when the environment names another store: a test run, which must
+    /// not do what only the everyday app should (the testing aids that type
+    /// or run something check this).
+    /// </summary>
+    public static bool UsesDefaultStore { get; } = Override("TOOLBOX_STORE_PATH") is null;
+
     public static string VaultPath { get; } =
         Override("TOOLBOX_VAULT_PATH") ?? Path.Combine(DataDirectory, "vault.json");
 
@@ -42,6 +49,10 @@ internal static class AppPaths
     /// <summary>Profile folder for the terminal's WebView2 (it must be writable; the default is next to the exe).</summary>
     public static string WebViewDataDirectory { get; } =
         Override("TOOLBOX_WEBVIEW_DATA") ?? Path.Combine(LocalDirectory, "WebView2");
+
+    /// <summary>Where a downloaded update is kept and unpacked until it is installed.</summary>
+    public static string UpdatesDirectory { get; } =
+        Override("TOOLBOX_UPDATES_DIR") ?? Path.Combine(LocalDirectory, "updates");
 
     /// <summary>Folder holding the terminal page and xterm.js, shipped next to the executable.</summary>
     public static string TerminalAssets { get; } = Path.Combine(AppContext.BaseDirectory, "Assets", "Terminal");

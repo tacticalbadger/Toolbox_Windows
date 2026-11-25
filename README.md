@@ -17,11 +17,14 @@ repository's history (commit `3462de1`) as the reference for the port.
 The latest build is on the
 [Releases page](https://github.com/tacticalbadger/Toolbox_Windows/releases/latest):
 take the zip for your PC (`win-x64` for most, `win-arm64` for Windows on
-ARM), unblock it (right-click ▸ Properties ▸ Unblock), extract it anywhere
-and run `Toolbox.exe`. Nothing needs installing. The builds are not
-code-signed yet, so Windows asks before the first run: More info ▸ Run
-anyway. The repository is private, so the link works for people who have
-been given access to it.
+ARM), unblock it (right-click ▸ Properties ▸ Unblock), extract it to a
+folder of your own (for example `%LOCALAPPDATA%\Programs`) and run
+`Toolbox.exe`. Nothing needs installing. The builds are not code-signed
+yet, so Windows asks before the first run: More info ▸ Run anyway.
+
+From 0.3.0 on that is the last download by hand: Toolbox looks for a new
+version once a day and under Help ▸ Check for Updates…, shows what
+changed, and installs it when you agree (see "Updates" below).
 
 ## Layout
 
@@ -29,10 +32,13 @@ been given access to it.
 core/     Rust crate toolbox-core: SSH (russh), SFTP, FTP/FTPS, the vault,
           1Password and Active Directory providers, the connection store.
           Exposed to C# through UniFFI.
-app/      C# WPF application (.NET 10): workspaces and panes, terminal
-          (xterm.js in WebView2), RDP (Microsoft's mstscax control), file
-          browser, sidebar tree, editors, vault key and owner check.
-tools/    build.ps1, publish.ps1 and the end-to-end harness (tools\e2e).
+app/      C# WPF application (.NET 10): workspaces and panes, SSH terminal
+          (xterm.js in WebView2), local terminals (a window of Windows
+          Terminal in a pane), RDP (Microsoft's mstscax control), file
+          browser, sidebar tree, editors, vault key and owner check,
+          updates.
+tools/    build.ps1, publish.ps1, update-key.ps1 and the end-to-end
+          harness (tools\e2e).
 docs/     Security review, release notes and Royal TS reference material.
 ```
 
@@ -51,12 +57,13 @@ docs/     Security review, release notes and Royal TS reference material.
 
 Fetched on first build (network needed once): Rust crates from crates.io,
 NuGet packages from nuget.org (WebView2 SDK, Windows SDK projection), and
-xterm.js with three addons from the npm registry, pinned by version and
-SHA-512 in `tools\build.ps1`.
+xterm.js with four addons (fit, web links, WebGL, search) from the npm
+registry, pinned by version and SHA-512 in `tools\build.ps1`.
 
 Optional: 1Password CLI (`winget install AgileBits.1Password.CLI`, then
 enable CLI integration in the 1Password app) for 1Password providers and
-credentials.
+credentials. Windows Terminal for local terminals (part of Windows 11; in
+the Microsoft Store for Windows 10).
 
 ## Build
 
@@ -70,7 +77,8 @@ tools\build.ps1 clean
 ```
 
 Targets: `core` (Rust → `toolbox_core.dll` + generated C# bindings),
-`assets` (xterm.js), `app` (WPF app), `test`, `run`, `clean`. Run `core`
+`assets` (xterm.js), `app` (WPF app), `test`, `run`, `package`, `feed`,
+`clean`. Run `core`
 again after any change to the Rust API: the bindings and the DLL are
 generated, not in git. `app` will not overwrite a build that is running
 unless `-Restart` is given.
@@ -82,10 +90,11 @@ Your connections, credentials, vault and settings live in
 ## Sharing builds with the team
 
 ```powershell
-Set-Content VERSION 0.3.0                  # when the version should change
+Set-Content VERSION 0.3.1                  # when the version should change
 tools\build.ps1 core assets package        # build\release\Toolbox-<version>-win-arm64.zip (on an ARM64 PC)
 tools\build.ps1 core package -Arch x64     # ...-win-x64.zip; cross-compiles, no extra tools needed
-tools\publish.ps1                          # GitHub Release v<version> with the zips and SHA256SUMS
+tools\build.ps1 feed                       # update.json and its signature: what installed copies read
+tools\publish.ps1                          # GitHub Release v<version> with the zips, SHA256SUMS and the feed
 ```
 
 A package is a folder with everything inside, the .NET runtime included,
@@ -93,10 +102,34 @@ zipped. The build number is the commit count, and `publish.ps1` insists
 that the packages were built from the current commit and that the commit
 is pushed, so commit and push first, then package, then publish. It
 writes the release notes: the standard install text plus the bullets in
-`docs\release-notes\<version>.md` if that file exists. `-Replace`
-re-uploads an existing release's files, `-DryRun` shows what would be
-sent. No GitHub CLI is needed; the script uses the credential Git already
-has for the repository.
+`docs\release-notes\<version>.md` if that file exists (the same bullets
+are what the update window shows). `-Replace` re-uploads an existing
+release's files, `-DryRun` shows what would be sent. No GitHub CLI is
+needed; the script uses the credential Git already has for the
+repository.
+
+Publishing is the moment installed copies start being offered the
+version. `feed` needs both packages and the update key, and `publish.ps1`
+refuses to go on without a feed that describes exactly the files it is
+about to upload and carries the key's signature: a release without one
+would silently stop updates for everyone until the next release.
+
+**The update key.** Updates are signed with one ECDSA P-256 key. Its
+public half is in the app (`app\Toolbox\Support\Updates.cs`); its private
+half is in the Windows key store of the account releases are made from,
+under the name "Toolbox Update Key", and nowhere else: not in a file, not
+in the repository. `tools\update-key.ps1` is how it is handled:
+
+```powershell
+tools\update-key.ps1 check                 # is the key in this account the one the app trusts?
+tools\update-key.ps1 export -To key.txt    # the private half, for a password manager; delete the file afterwards
+tools\update-key.ps1 import -From key.txt  # on another PC that should make releases
+```
+
+Keep a copy in a password manager. Whoever has the key can make every
+installed copy install anything; and without it no update can be made
+that installed copies accept: there is no second way in, so a lost key
+means everyone downloads the next version by hand.
 
 Releases on this repository are immutable: once one is published, GitHub
 accepts no change to its files, and its version number cannot be used for
@@ -115,18 +148,34 @@ then every recipient sees the SmartScreen warning once.
 
 ## What works
 
-- Workspaces as tabs ("+" or Ctrl+Shift+T), any mix of sessions in each;
-  double-click a tab to rename it. Split panes; rearrange by dragging a
-  pane's header onto another pane's edge (split there) or middle (trade
-  places); drag a connection from the sidebar onto a pane the same way.
-  Divider positions are kept when panes come and go. Move a pane to
-  another workspace from its header's menu or the Pane menu; the session
-  keeps running. A session that ends cleanly closes its pane by itself;
-  one that fails stays so the message can be read.
+- Every connection opens in a workspace tab of its own, named after it:
+  SSH, remote desktop, file transfer and local terminals alike. Put
+  sessions side by side when you want to: split a pane and open into the
+  empty half, drop a connection from the sidebar on a pane's edge, or move
+  a pane to another workspace from its header's menu or the Pane menu (the
+  session keeps running). Rearrange by dragging a pane's header onto
+  another pane's edge (split there) or middle (trade places). Divider
+  positions are kept when panes come and go. A tab closes when its last
+  session ends or is moved away; a session that fails stays so the message
+  can be read. Double-click a tab to give it a name of your own; clear the
+  name to go back to the automatic one.
 - SSH terminals (xterm.js in WebView2) with six themes and text-size
   shortcuts, known_hosts shared with Windows OpenSSH, key files (with a
   passphrase prompt), private keys from the vault or 1Password, and the
-  SSH agent pipe (Windows OpenSSH or 1Password).
+  SSH agent pipe (Windows OpenSSH or 1Password). Edit ▸ Find
+  (Ctrl+Shift+F) searches the text of a terminal, including what has
+  scrolled out of view; Enter and Shift+Enter (or F3 and Shift+F3) step
+  through the matches.
+- Local terminals: File ▸ New Local Terminal (Ctrl+Alt+T, or the toolbar
+  button) puts a window of your own Windows Terminal in a tab, with your
+  default profile; New Local Terminal With lists your other profiles. It
+  is Windows Terminal itself, so its colours, fonts and key bindings are
+  the ones you set there, and the app's themes, text size and find bar do
+  not apply to it (Terminal has its own find on Ctrl+Shift+F). The tab
+  carries the window's title. Closing an idle shell asks nothing; one that
+  is running a program names it first. While a local terminal has the
+  keyboard every key goes to Windows Terminal, the app's shortcuts
+  included: click another pane or the sidebar to get them back.
 - RDP through Microsoft's own client control: NLA, the usual certificate
   warning when a server cannot be verified, and the host's modern
   graphics (the graphics pipeline with H.264 when the host offers it,
@@ -150,7 +199,9 @@ then every recipient sees the SmartScreen warning once.
 - A sidebar tree like Royal TS: folders (nest with `/`), providers as
   folders in place with what they generate underneath, drag and drop
   between folders, and context menus on every node. The filter field
-  above it narrows the whole tree. Expansion is remembered.
+  above it narrows the whole tree. Which folders are open is remembered,
+  also across renaming or moving them. Only the rows on screen are built,
+  so a tree of a few thousand computers stays quick to filter.
 - Credentials: kept encrypted in the local vault, fetched from 1Password
   when used, or asked for. A connection can pick a credential (the picker
   groups vault, 1Password and ask-each-time entries and has a search
@@ -164,7 +215,13 @@ then every recipient sees the SmartScreen warning once.
   VNC, Linux → SSH, OUs as folders). Each AD account (bind, domain
   controllers, other computers) can be an existing credential or typed
   into the provider and kept in the vault. Providers refresh at launch,
-  on a timer, and on demand (Ctrl+Shift+R).
+  on a timer, and on demand (Ctrl+Shift+R). A provider is a folder named
+  after it: rename the provider and the folder is renamed with everything
+  inside; a folder holds one provider.
+- Updates: Help ▸ Check for Updates…, and once a day by itself unless
+  Help ▸ Check for Updates Automatically is switched off. A new version is
+  shown with its notes and installed when you agree; installing restarts
+  the app, so it asks first when sessions are open. See "Updates" below.
 - The vault key is kept in `vault.key`, protected by Windows for your
   account (DPAPI). Before the vault unlocks, Windows confirms it is you:
   Windows Hello, or your account password where Hello is not set up.
@@ -179,23 +236,45 @@ keep going to the terminal.
 | | |
 |---|---|
 | New workspace / connection | Ctrl+Shift+T / Ctrl+Shift+N |
+| New local terminal | Ctrl+Alt+T |
 | Split right / down | Alt+Shift+= / Alt+Shift+- |
 | Next / previous pane | Ctrl+Shift+] / Ctrl+Shift+[ |
 | Close pane / workspace | Ctrl+Shift+W / Ctrl+Alt+W |
 | Move pane to a new workspace | Ctrl+Shift+M |
 | Next / previous workspace | Ctrl+Tab / Ctrl+Shift+Tab |
 | Rename workspace | Ctrl+Alt+R |
-| Browse files of the focused session | Ctrl+Shift+F |
+| Find in the terminal / next / previous | Ctrl+Shift+F / Ctrl+Shift+G / Ctrl+Alt+G |
+| Browse files of the focused session | Ctrl+Alt+F (was Ctrl+Shift+F up to 0.2.1) |
 | Sync providers | Ctrl+Shift+R |
 | Toggle sidebar | Ctrl+Shift+B |
 | Terminal text size | Ctrl+= / Ctrl+- / Ctrl+0 |
 | Terminal copy / paste | Ctrl+Shift+C / Ctrl+Shift+V (or right-click) |
 
+## Updates
+
+Once a day, and when asked, Toolbox reads a small file attached to the
+newest release on GitHub (`update.json`). An update is installed only if
+that file carries a signature made with Toolbox's update key and the
+downloaded package is exactly the file it describes (length and SHA-256):
+whoever controls the place the files are served from can withhold an
+update but not supply one. A check sends a request for that file with the
+app's version, build number and processor type, and nothing about your
+connections or credentials.
+
+Installing replaces the files in the folder Toolbox runs from, so that
+folder has to be one you may write to (not Program Files); otherwise the
+app says so and you replace the folder by hand. Your connections, vault
+and settings are elsewhere and are not touched. A copy you built yourself
+(`tools\build.ps1 app`) does not look for updates.
+
 ## Not there yet
 
 Compared with the Mac app: **VNC** (a VNC connection says so instead of
 opening), code signing and an installer (releases are unsigned zips), the
-app icon, and selecting several sidebar items at once. From the Mac's
+app icon, and selecting several sidebar items at once. Local terminals
+are Windows Terminal's windows where the Mac runs a shell in its own
+terminal: the app's themes, text size and find bar do not reach them, and
+its shortcuts do not work while one has the keyboard. From the Mac's
 0.3.0, one switch is missing: View ▸ Remote Desktop ▸ Retina Resolution,
 which asks for a desktop with a quarter of the pixels and magnifies it.
 Microsoft's control cannot magnify a picture dependably (its zoom leaves
@@ -215,6 +294,7 @@ tools\e2e\servers.ps1 start                          # SSH+SFTP :2222, FTP :2121
 tools\e2e\launch.ps1 --connect echo --files ftp-local   # relaunch against the fixture, owner check off
 tools\e2e\capture.ps1                                # screenshot every Toolbox window into build\e2e\shots
 tools\e2e\ui.ps1 tree                                # drive the app: tree, invoke, click, drag, keys, text
+tools\e2e\update-rehearsal.ps1                       # a whole self-update from a test feed, and the tampering it must refuse
 tools\e2e\servers.ps1 stop
 ```
 
@@ -232,26 +312,40 @@ whatever the app announces on its clipboard and log its size, never its
 contents. Their certificates are self-signed, so the certificate warning
 comes first.
 
-Launch arguments: `--connect <id>` and `--files <id>` (both may repeat),
-`--expand-all`, and the testing aids `--demo-move`, `--demo-close`,
-`--demo-split` (splits the focused pane, which resizes what is in it),
-`--edit-connection <id|new>`, `--edit-credential <id|new>`,
-`--edit-provider <id|new>`, `--set-folder-credential <path>`,
-`--demo-credential-search <text>` (credential pickers open with that
-search typed), `--demo-provider-account <provider-id>`, `--unlock-vault`
-and `--assume-keyboard` (treats remote desktop panes as the one in use
-when the app cannot be in front; for clipboard checks, never for normal
-use). Environment
-overrides: `TOOLBOX_STORE_PATH`, `TOOLBOX_VAULT_PATH`,
-`TOOLBOX_VAULT_KEY_PATH`, `TOOLBOX_SETTINGS_PATH`, `TOOLBOX_KNOWN_HOSTS`,
-`TOOLBOX_LOG_PATH`, `TOOLBOX_WEBVIEW_DATA`.
+Launch arguments: `--connect <id>`, `--files <id>` and `--local-terminal`
+(all may repeat; the first session takes the empty workspace, every
+further one a tab of its own), `--local-terminal-profile <name>`,
+`--expand-all`, and the testing aids `--demo-move` (the focused pane to a
+new workspace, when it shares one), `--demo-merge` (every other tab's
+sessions into the first workspace), `--demo-select-tab <n>`,
+`--demo-close`, `--demo-split` (splits the focused pane, which resizes
+what is in it), `--demo-find <text>` (searches the focused terminal and
+logs what was found), `--edit-connection <id|new>`,
+`--edit-credential <id|new>`, `--edit-provider <id|new>`,
+`--set-folder-credential <path>`, `--demo-credential-search <text>`
+(credential pickers open with that search typed),
+`--demo-provider-account <provider-id>`,
+`--demo-provider-rename <provider-id> <name>`,
+`--demo-folder-rename <path> <new path>`, `--unlock-vault`,
+`--assume-keyboard` (treats remote desktop panes as the one in use when
+the app cannot be in front; for clipboard checks, never for normal use)
+and `--rdp-expose-control` (puts the Remote Desktop control's windows
+back into the accessibility tree, which brings back the lost keystrokes
+0.3.0 fixed; for seeing the difference). The update rehearsal's aids
+(`--updater-feed`, `--updater-key`, `--updater-pretend-build`,
+`--demo-update`, `--demo-update-install`) are honoured only in a run
+against a store named in the environment. Environment overrides:
+`TOOLBOX_STORE_PATH`, `TOOLBOX_VAULT_PATH`, `TOOLBOX_VAULT_KEY_PATH`,
+`TOOLBOX_SETTINGS_PATH`, `TOOLBOX_KNOWN_HOSTS`, `TOOLBOX_LOG_PATH`,
+`TOOLBOX_WEBVIEW_DATA`, `TOOLBOX_UPDATES_DIR`.
 
 ## Security
 
 `docs/SECURITY-REVIEW.md` records the review findings and residual risks,
 with an addendum per security-relevant change (most recently the review
-for 0.2.1: clipboard sharing with remote desktops, and what was hardened
-after reading the whole Windows app again).
+for 0.3.0: updates over the air and the key they depend on, local
+terminals as windows of another program, and the search addon in the
+terminal page).
 
 ## License
 

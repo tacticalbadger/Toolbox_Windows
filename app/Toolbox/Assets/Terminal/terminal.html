@@ -12,10 +12,19 @@
 </head>
 <body>
 <div id="terminal"></div>
+<!-- Find in the terminal's text and scrollback (Ctrl+Shift+F). -->
+<div id="find" hidden>
+  <input id="find-text" type="text" spellcheck="false" autocomplete="off" placeholder="Find" aria-label="Find">
+  <span id="find-count" aria-live="polite"></span>
+  <button id="find-previous" type="button" title="Previous match (Shift+Enter)" aria-label="Previous match">&#x2191;</button>
+  <button id="find-next" type="button" title="Next match (Enter)" aria-label="Next match">&#x2193;</button>
+  <button id="find-close" type="button" title="Close (Esc)" aria-label="Close">&#x2715;</button>
+</div>
 <script src="xterm/xterm.js"></script>
 <script src="xterm/addon-fit.js"></script>
 <script src="xterm/addon-web-links.js"></script>
 <script src="xterm/addon-webgl.js"></script>
+<script src="xterm/addon-search.js"></script>
 <script src="terminal.js"></script>
 </body>
 </html>

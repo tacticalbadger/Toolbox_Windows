@@ -84,7 +84,16 @@ struct EchoServer {
 impl server::Server for EchoServer {
     type Handler = Self;
     fn new_client(&mut self, _: Option<SocketAddr>) -> Self {
-        self.clone()
+        // Channel ids start over in every connection, so each client gets
+        // channel tables of its own. With shared ones, two clients that
+        // opened their first channel at the same moment took each other's:
+        // one of two SFTP sessions started together never got its
+        // handshake answered.
+        Self {
+            channels: Arc::new(Mutex::new(HashMap::new())),
+            sftp_channels: Arc::new(Mutex::new(HashSet::new())),
+            ..self.clone()
+        }
     }
 }
 

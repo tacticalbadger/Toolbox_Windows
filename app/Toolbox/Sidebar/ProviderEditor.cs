@@ -25,7 +25,7 @@ internal sealed class ProviderEditor : EditorWindow
         form.Section("Provider");
         form.Row("Name", FormBuilder.Text(nameof(ProviderDraft.Name), hintPath: nameof(ProviderDraft.NameHint)));
         form.Row("Location", FormBuilder.Text(nameof(ProviderDraft.Parent), "Top level; use / for subfolders"));
-        form.Note("Appears as a folder named after the provider; what it generates lands inside.");
+        form.Note("Appears as a folder with this name; what it generates lands inside. Renaming the provider renames the folder.");
         var source = new ComboBox { ItemsSource = ProviderKindChoices.All, HorizontalAlignment = HorizontalAlignment.Stretch };
         source.SetBinding(System.Windows.Controls.Primitives.Selector.SelectedItemProperty,
                           new Binding(nameof(ProviderDraft.SelectedKind)) { Mode = BindingMode.TwoWay });

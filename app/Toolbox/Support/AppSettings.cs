@@ -50,6 +50,12 @@ internal sealed class AppSettings
     /// </summary>
     public bool RdpShareClipboard { get; set; } = true;
 
+    /// <summary>Look for a new version once a day (Help > Check for Updates Automatically).</summary>
+    public bool CheckForUpdates { get; set; } = true;
+
+    /// <summary>When the update feed was last read successfully.</summary>
+    public DateTimeOffset? LastUpdateCheck { get; set; }
+
     public bool SidebarVisible { get; set; } = true;
     public double SidebarWidth { get; set; } = 290;
     public WindowPlacement? Window { get; set; }

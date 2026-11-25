@@ -544,3 +544,191 @@ the control), and the owner's clipboard was not overwritten for a test,
 so "a change while another pane is in use is not offered" is shown with
 the control alone and, in the app, with two sessions at once. Windows 10
 has not run this build.
+
+## Addendum — 2026-11-25: Toolbox 0.3.0 (updates over the air; local terminals; find in the terminal)
+
+**Updates over the air.** From this version an installed copy replaces
+itself with a newer one. That is the most powerful thing the app does:
+whoever can make a copy accept an update runs code as its user. So the
+question for every part is who can make that happen.
+
+*How it works.* Once a day, and from Help ▸ Check for Updates…, the app
+fetches `update.json` and `update.json.sig` from the newest GitHub Release
+of this repository. The feed names the version, its build number, the
+release notes, and for each architecture the package's file name, length
+and SHA-256. The package is downloaded from that version's release,
+checked against length and hash, unpacked next to the app's other local
+data (`%LOCALAPPDATA%\Toolbox\updates`), and the unpacked copy is started
+to put its own files in the place of the old ones once the old app has
+closed (`UpdateInstaller`).
+
+*What is trusted.* One key: ECDSA on P-256 with SHA-256. Its public half
+is a constant in the app (`Updates.PublicKey`). The feed's bytes have to
+carry its signature before a single field is read; the package is covered
+by the hash in that signed feed. Nothing else is trusted: not TLS, not
+GitHub, not the file's name or where it came from.
+
+- **Someone who controls what is served** (the hosting, the account's
+  releases, the network path) can withhold an update: serve an old feed,
+  or none. A copy that is cut off this way is not told. They cannot
+  supply one: a feed they write has no signature, a package they swap
+  does not match the signed hash. Both are refused and logged, and the
+  update rehearsal (`tools\e2e\update-rehearsal.ps1`) checks both.
+- **An old feed served again** is accepted as genuine, and does nothing:
+  an update has to have a higher build number than the running copy, and
+  the build number is the commit count, which only goes up. There is no
+  way back to an older version through the updater.
+- **Someone who has the private key** can make every installed copy
+  install anything. The key is in the Windows key store of the account
+  releases are made from (Microsoft Software Key Storage Provider, which
+  keeps it encrypted for that account), under the name "Toolbox Update
+  Key". It is exportable on purpose, so that a copy can be kept in a
+  password manager; that means any program running as that account can
+  export it too. It is not in the repository, and `tools\update-key.ps1`
+  writes it to a file only when asked to (`export`).
+- **There is no second way in.** Sparkle, on the Mac, also accepts an
+  archive signed with the Developer ID, and reads a badly signed feed
+  after 20 days. Here nothing but the key works, in both directions: a
+  stolen code-signing certificate (there is none yet) would not help an
+  attacker, and a lost key means no installed copy can be updated again;
+  everyone downloads the next version by hand.
+- **The builds are still not code-signed.** For the first download
+  nothing changed: the zip and `SHA256SUMS` come from the same place over
+  HTTPS. From then on updates are better protected than that first
+  download.
+
+*What the app does with what it fetches.* The feed is limited to 256 KB
+and its signature to 1 KB. Parsing is strict (`UpdateFeed.Parse`): a
+version is three numbers, a build number is in a plausible range, a
+package's file name must be exactly the one name that version and
+architecture has (the feed carries no address; the download address is
+built from the repository's and the version), a hash is 64 hexadecimal
+digits. Release notes are shown as text, with control characters removed,
+never interpreted. Redirects are followed, as GitHub needs, but not to
+plain HTTP. The download stops when it is longer than the feed said.
+Unpacking refuses entries that would land outside the folder, and the
+result has to contain the app.
+
+*Installing.* The swap moves the old version's files aside (those its
+`files.txt` lists, and those the new version replaces) and copies the new
+ones in; a file neither version knows is left alone, and a failure
+half-way puts the old files back. The old list is read as data: a line
+that is not a plain path below the folder is ignored, so a tampered list
+cannot make the update move files elsewhere. `Toolbox.exe --apply-update
+<folder> <process id>` is how the unpacked copy is told to do this. Run by
+hand it copies the files of the copy that was started into a folder that
+already holds a Toolbox, with the caller's own rights; it gives nobody
+anything they did not have.
+
+*What a local program can do.* Anything running as the user can already
+replace the app's files, since the app lives in a folder the user can
+write to (that was true of the zip before, and updating requires it), and
+can alter a download between its check and its use. The updater adds no
+way to gain rights: nothing runs elevated.
+
+*Where it does not run.* A build made with `tools\build.ps1 app` does not
+look for updates; only a packaged one does. A run against a store named
+in the environment (a test run) looks nowhere unless the rehearsal's
+arguments name a feed, and only such a run accepts a feed, a key or a
+pretended build number from the command line: the everyday app takes none
+of them.
+
+*What a check tells GitHub.* The request for the two files, with
+`Toolbox/<version> (build <n>; win-arm64|win-x64)` as the User-Agent, from
+the PC's address, once a day. Nothing about connections, credentials or
+the account.
+
+*Not verified.* An update between two published releases (the first real
+one will be 0.3.0 to whatever comes next); the x64 package updating on
+x64 hardware; a copy in a folder it may not write to (the app says so and
+installs nothing: read in the code, not seen); cancelling a download.
+
+**Local terminals.** A local terminal is a window of the user's Windows
+Terminal, moved into a pane. The owner chose this over a shell in the
+app's own terminal.
+
+- The app starts `wt.exe` with fixed arguments (`-w new --focus`, and
+  `new-tab -p <name>` for a named profile), passed as separate arguments,
+  never through a shell. It runs no shell itself and passes no command:
+  nothing in the store, and no launch argument, can make it run one.
+  What a profile runs is what the user set up in Windows Terminal.
+- Profile names for the menu are read from Terminal's settings file,
+  which the user edits by hand: as data, visible profiles only, and a
+  name with control characters or of more than 100 characters is left
+  out.
+- `wt.exe` is looked for at the alias Windows keeps for the installed app
+  (`%LOCALAPPDATA%\Microsoft\WindowsApps`) first, then on `PATH`. Where
+  Terminal is not installed, a `wt.exe` planted on `PATH` would be
+  started. The same holds for `op`; both are the user's own search path.
+- **Which window is taken.** The new window is told apart by being a
+  Windows Terminal window that was not there a moment before. A program
+  already running as the user could open a window of that class at that
+  moment and have it shown in the pane, and what is typed there goes to
+  it. Such a program can read the user's keys by simpler means; noted,
+  not defended against.
+- A window in a pane is a child window of another process: the two
+  programs' input is handled together from then on, so if one hangs the
+  other can stop taking keys. Closing asks the window to close and waits;
+  a window that will not close is handed back to the desktop, never
+  destroyed, and a running Toolbox ends no shell.
+- **When Toolbox is killed outright** (or crashes) with a terminal in a
+  pane, Windows destroys that window with it, and Windows Terminal keeps
+  the shell running with no window anybody could reach it through. So
+  each run writes down its terminals' shells
+  (`%LOCALAPPDATA%\Toolbox\terminals\<process id>.txt`: process id, start
+  time and name, of itself and of each shell), and the next start ends
+  the shells of runs that are gone, with what they started
+  (`TerminalLedger`). This is the one place the app ends processes. A
+  process is ended only if its id, start time and name all match what was
+  written down, so a reused process id cannot hit a bystander; the file
+  is the user's own, and someone who can edit it can already end the
+  user's processes. A Terminal window of the user's own in the same
+  Terminal process was not part of any test.
+- To tell an idle shell from one that runs a program, the app reads the
+  system's process list (names and parents). The name appears in the
+  "still running" question and nowhere else.
+- The window's title is whatever the program in the terminal sets, which
+  can be a host reached with `ssh` from it. In the tab, the pane's header
+  and the log it is kept to one line of at most 200 characters without
+  control characters, like an SSH session's.
+- While a local terminal has the keyboard, every key goes to Windows
+  Terminal: the app sees none of them, and installs no keyboard hook to
+  change that.
+
+**Hosted windows and lost keystrokes.** With a remote desktop on screen,
+keys typed elsewhere in the window could be dropped (of "web" typed
+quickly into the sidebar's filter, the "w" arrived). They were dropped,
+not sent to the remote desktop: the test server's key count did not
+move. The cause is in how WPF reports changes to accessibility tools
+when another program's window is part of its tree; panes that host such
+a window (remote desktops, local terminals) are now one element to those
+tools (`NativePanePeer`). Recorded here because input that silently goes
+missing matters where passwords are typed.
+
+**The terminal page.** Find uses xterm.js's search addon (0.16.0, fetched
+from the npm registry and pinned by SHA-512 like the other three). Its
+highlighting needs `allowProposedApi`, which is now on: it lets the page's
+own script call interfaces xterm.js still marks as proposed, and gives a
+program in the terminal nothing new. The find bar is part of the same
+page, under the same content security policy (no network, no inline
+script). What is searched for stays in the page; the app is told how many
+matches there were, for the log, only by the `--demo-find` testing aid.
+
+**The store.** A folder holds one provider now, on every route, and a
+provider the store would refuse is refused before the accounts typed into
+it are written to the vault, so a refusal leaves no secret behind. An
+older document with two providers in one folder is put right when it is
+opened, in memory; nothing is deleted, and the file is only written by
+the next change.
+
+**Dependencies.** `cargo audit` reported one advisory published since
+0.2.1: RUSTSEC-2026-0592, a stack overflow in the `url` crate's
+`Url::origin()` on nested `blob:` addresses. The core reaches that crate
+through its LDAP and FTPS libraries. Updated to the fixed version
+(2.5.9) in `core/Cargo.lock`; the audit is clean again apart from the two
+"unmaintained" notes it had before (`basic-toml`, `chrono`).
+
+**Found and not done.** A package carries xterm.js's license text and no
+other third party's (WebView2's loader, the crates the core is built
+from). Their licenses ask for the notice to travel with copies; a build
+step that collects them is still to do, as on the Mac.

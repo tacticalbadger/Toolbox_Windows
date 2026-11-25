@@ -26,7 +26,7 @@ internal static class TerminalEnvironment
 /// itself is xterm.js in a WebView2 that only ever loads the page shipped
 /// with the app.
 /// </summary>
-internal sealed class TerminalPane : Grid, IPaneContent
+internal sealed class TerminalPane : Grid, IPaneContent, ISearchablePane
 {
     // A name under the reserved .example domain: it exists only as this
     // WebView2's mapping onto the app's own folder.
@@ -57,6 +57,13 @@ internal sealed class TerminalPane : Grid, IPaneContent
 
     public FrameworkElement View => this;
     public string Title => title;
+
+    /// <summary>
+    /// The tab keeps to the connection's name; the pane's header adds
+    /// whatever title the remote shell sets, which changes with every prompt
+    /// on many hosts.
+    /// </summary>
+    public string TabTitle => Connection.Name;
     public bool IsLive => isLive;
     public event Action? TitleChanged;
     public event Action? StateChanged;
@@ -130,6 +137,21 @@ internal sealed class TerminalPane : Grid, IPaneContent
         web.Focus();
         Post("{\"t\":\"focus\"}");
     }
+
+    // ----- ISearchablePane: the page has the find bar -----
+
+    public void Find()
+    {
+        if (terminated) return;
+        web.Focus();
+        Post("{\"t\":\"find\"}");
+    }
+
+    public void FindNext() => Post("{\"t\":\"findNext\"}");
+
+    public void FindPrevious() => Post("{\"t\":\"findPrevious\"}");
+
+    public void FindDemo(string text) => Post(JsonSerializer.Serialize(new { t = "findDemo", d = text }));
 
     public void Terminate()
     {
@@ -264,6 +286,10 @@ internal sealed class TerminalPane : Grid, IPaneContent
                     break;
                 case "link":
                     OpenLink(message.GetProperty("d").GetString());
+                    break;
+                case "found":
+                    Log.Info($"terminal: find ({Connection.Name}): match {message.GetProperty("index").GetInt32() + 1} of " +
+                             $"{message.GetProperty("count").GetInt32()}, bar open: {message.GetProperty("open").GetBoolean()}");
                     break;
             }
         }

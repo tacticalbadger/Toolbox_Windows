@@ -9,11 +9,16 @@
         <Menu DockPanel.Dock="Top" x:Name="MainMenu">
             <MenuItem Header="_File" SubmenuOpened="OnMenuOpened">
                 <MenuItem Header="New _Workspace" InputGestureText="Ctrl+Shift+T" Click="OnNewWorkspace" />
+                <MenuItem Header="New Local _Terminal" InputGestureText="Ctrl+Alt+T" Click="OnNewLocalTerminal"
+                          AutomationProperties.AutomationId="NewLocalTerminal" />
+                <!-- The profiles of the user's Windows Terminal; filled each time the menu opens. -->
+                <MenuItem x:Name="TerminalProfilesMenu" Header="New Local Terminal Wit_h"
+                          AutomationProperties.AutomationId="TerminalProfilesMenu" />
                 <MenuItem Header="New _Connection…" InputGestureText="Ctrl+Shift+N" Click="OnNewConnection" />
                 <MenuItem Header="New C_redential…" Click="OnNewCredential" />
                 <MenuItem Header="New _Provider…" Click="OnNewProvider" />
                 <Separator />
-                <MenuItem x:Name="BrowseFilesItem" Header="_Browse Files" InputGestureText="Ctrl+Shift+F"
+                <MenuItem x:Name="BrowseFilesItem" Header="_Browse Files" InputGestureText="Ctrl+Alt+F"
                           Click="OnBrowseFiles" />
                 <Separator />
                 <MenuItem Header="_Sync Providers" InputGestureText="Ctrl+Shift+R" Click="OnSyncProviders" />
@@ -23,6 +28,15 @@
                 <MenuItem Header="Close Wor_kspace" InputGestureText="Ctrl+Alt+W" Click="OnCloseWorkspace" />
                 <Separator />
                 <MenuItem Header="E_xit" InputGestureText="Alt+F4" Click="OnExit" />
+            </MenuItem>
+            <!-- Searching a terminal's text and scrollback; the find bar is part of the terminal. -->
+            <MenuItem Header="_Edit" SubmenuOpened="OnMenuOpened" AutomationProperties.AutomationId="EditMenu">
+                <MenuItem x:Name="FindItem" Header="_Find…" InputGestureText="Ctrl+Shift+F" Click="OnFind"
+                          AutomationProperties.AutomationId="EditFind" />
+                <MenuItem x:Name="FindNextItem" Header="Find _Next" InputGestureText="Ctrl+Shift+G" Click="OnFindNext"
+                          AutomationProperties.AutomationId="EditFindNext" />
+                <MenuItem x:Name="FindPreviousItem" Header="Find _Previous" InputGestureText="Ctrl+Alt+G"
+                          Click="OnFindPrevious" AutomationProperties.AutomationId="EditFindPrevious" />
             </MenuItem>
             <MenuItem Header="_View" SubmenuOpened="OnMenuOpened">
                 <MenuItem Header="Toggle _Sidebar" InputGestureText="Ctrl+Shift+B" Click="OnToggleSidebar" />
@@ -65,7 +79,13 @@
                 <MenuItem x:Name="RequireAuthItem" Header="_Confirm It's You Before Unlocking" IsCheckable="True"
                           Click="OnToggleVaultAuth" />
             </MenuItem>
-            <MenuItem Header="_Help">
+            <MenuItem Header="_Help" SubmenuOpened="OnMenuOpened">
+                <MenuItem x:Name="CheckUpdatesItem" Header="Check for _Updates…" Click="OnCheckForUpdates"
+                          AutomationProperties.AutomationId="CheckForUpdates" />
+                <MenuItem x:Name="AutoUpdatesItem" Header="Check for Updates Automaticall_y" IsCheckable="True"
+                          Click="OnToggleAutomaticUpdates" AutomationProperties.AutomationId="CheckForUpdatesAutomatically"
+                          ToolTip="Look for a new version once a day. Nothing is installed without asking." />
+                <Separator />
                 <MenuItem Header="_About Toolbox" Click="OnAbout" />
             </MenuItem>
         </Menu>
@@ -113,8 +133,13 @@
                                 AutomationProperties.AutomationId="ToolNewConnection" AutomationProperties.Name="New connection">
                             <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE710;" />
                         </Button>
+                        <Button Style="{StaticResource ToolButton}" Click="OnNewLocalTerminal"
+                                ToolTip="New local terminal (Ctrl+Alt+T)"
+                                AutomationProperties.AutomationId="ToolLocalTerminal" AutomationProperties.Name="New local terminal">
+                            <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE756;" />
+                        </Button>
                         <Button x:Name="BrowseFilesButton" Style="{StaticResource ToolButton}" Click="OnBrowseFiles"
-                                ToolTip="Browse files (Ctrl+Shift+F)"
+                                ToolTip="Browse files (Ctrl+Alt+F)"
                                 AutomationProperties.AutomationId="ToolBrowseFiles" AutomationProperties.Name="Browse files">
                             <TextBlock Style="{StaticResource ToolGlyph}" Text="&#xE8B7;" />
                         </Button>

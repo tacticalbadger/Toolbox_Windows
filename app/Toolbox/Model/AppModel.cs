@@ -26,6 +26,15 @@ internal sealed class AppModel
     /// <summary>Raised after the lists above have been re-read from the store.</summary>
     public event Action? Changed;
 
+    /// <summary>
+    /// A folder was renamed or moved with everything in it (from, to). Raised
+    /// once the lists above are up to date.
+    /// </summary>
+    public event Action<string, string>? FolderMoved;
+
+    /// <summary>False when <c>TOOLBOX_STORE_PATH</c> names another store (a test run).</summary>
+    public bool UsesDefaultStore { get; } = AppPaths.UsesDefaultStore;
+
     private AppModel()
     {
         StorePath = AppPaths.StorePath;
@@ -80,11 +89,15 @@ internal sealed class AppModel
         return created;
     }
 
-    public void RenameFolder(string path, string newPath)
+    /// <summary>Renames or moves a folder; returns the path it has now.</summary>
+    public string RenameFolder(string path, string newPath)
     {
-        Store.RenameFolder(path, newPath);
+        var from = FolderPath.Normalize(path) ?? path;
+        var renamed = Store.RenameFolder(path, newPath);
         Reload();
+        if (renamed != from) FolderMoved?.Invoke(from, renamed);
         ProviderSync.Shared.ScheduleAutoRefresh();
+        return renamed;
     }
 
     public void DeleteFolder(string path)
@@ -126,9 +139,18 @@ internal sealed class AppModel
 
     public void MoveProvider(Provider provider, string? parent)
     {
+        var before = Store.GetProvider(provider.Id)?.Folder;
         Store.MoveProvider(provider.Id, parent);
         Reload();
+        AnnounceFolder(provider.Id, before);
         ProviderSync.Shared.ScheduleAutoRefresh();
+    }
+
+    /// <summary>Raises <see cref="FolderMoved"/> when a provider's folder is no longer <paramref name="before"/>.</summary>
+    private void AnnounceFolder(string providerId, string? before)
+    {
+        if (before is null || Provider(providerId)?.Folder is not { } now || now == before) return;
+        FolderMoved?.Invoke(before, now);
     }
 
     // ----- Connections -----
@@ -242,10 +264,16 @@ internal sealed class AppModel
 
     public Provider? Provider(string id) => Providers.FirstOrDefault(p => p.Id == id);
 
+    /// <summary>
+    /// Saves the record. The provider's folder is named after it, so a new
+    /// name or location moves the folder and what is inside.
+    /// </summary>
     public Provider SaveProvider(Provider provider)
     {
+        var before = provider.Id.Length == 0 ? null : Store.GetProvider(provider.Id)?.Folder;
         var stored = Store.UpsertProvider(provider);
         Reload();
+        AnnounceFolder(stored.Id, before);
         ProviderSync.Shared.ScheduleAutoRefresh();
         return stored;
     }
@@ -253,12 +281,16 @@ internal sealed class AppModel
     /// <summary>
     /// Saves a provider from its editor: accounts typed into the provider are
     /// written to the vault first, then the provider, then accounts it no
-    /// longer uses are removed.
+    /// longer uses are removed. A provider the store would refuse (its folder
+    /// belongs to another one, say) is refused before any account is written.
     /// </summary>
     public async Task<Provider> SaveProviderAsync(ProviderDraft draft)
     {
-        var record = draft.ToProvider();
-        foreach (var (credential, password) in draft.ManagedAccounts(record.Folder))
+        var record = Store.ValidateProvider(draft.ToProvider());
+        // The accounts go where the provider is now; a new name or location
+        // then moves them along with the rest of its folder.
+        var folder = Store.GetProvider(record.Id)?.Folder ?? record.Folder;
+        foreach (var (credential, password) in draft.ManagedAccounts(folder))
         {
             await SaveCredentialAsync(credential, new Secret(password, null, null));
         }

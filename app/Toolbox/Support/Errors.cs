@@ -46,4 +46,24 @@ internal static class FolderPath
 
     public static string Join(string? parent, string name) =>
         string.IsNullOrEmpty(parent) ? name : $"{parent}/{name}";
+
+    /// <summary>
+    /// The path the way the store keeps it: each part trimmed, empty parts
+    /// dropped; null when nothing is left.
+    /// </summary>
+    public static string? Normalize(string path)
+    {
+        var parts = path.Split('/').Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
+        return parts.Count == 0 ? null : string.Join("/", parts);
+    }
+
+    /// <summary>
+    /// <paramref name="path"/> with a leading <paramref name="from"/> folder
+    /// replaced by <paramref name="to"/>, or null when it is not inside it.
+    /// </summary>
+    public static string? Moved(string path, string from, string to)
+    {
+        if (path == from) return to;
+        return path.StartsWith(from + "/", StringComparison.Ordinal) ? to + path[from.Length..] : null;
+    }
 }

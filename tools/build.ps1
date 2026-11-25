@@ -15,6 +15,9 @@
       package  self-contained build for handing out: a zip per architecture and
                SHA256SUMS under build/release (needs "core" for that
                architecture, and "assets", first)
+      feed     update.json and its signature under build/release: what
+               installed copies read to find this version (needs both
+               packages, and the update key: tools\update-key.ps1)
       clean    remove build output, generated bindings and fetched assets
 
     Run "core" again after any change to the Rust API: the bindings and the
@@ -30,6 +33,7 @@
     tools\build.ps1 core app -Arch x64
     tools\build.ps1 core assets package            # a package for this machine's architecture
     tools\build.ps1 core package -Arch x64         # and one for the other
+    tools\build.ps1 feed                           # then the signed update feed for both
 #>
 [CmdletBinding()]
 param(
@@ -51,7 +55,7 @@ $App = Join-Path $Root 'app'
 $Build = Join-Path $Root 'build'
 
 if (-not $Targets -or $Targets.Count -eq 0) { $Targets = @('core', 'assets', 'app') }
-$known = @('core', 'assets', 'app', 'test', 'run', 'package', 'clean')
+$known = @('core', 'assets', 'app', 'test', 'run', 'package', 'feed', 'clean')
 foreach ($t in $Targets) {
     if ($known -notcontains $t) { throw "unknown target '$t' (expected: $($known -join ', '))" }
 }
@@ -245,7 +249,10 @@ $XtermPackages = @(
        Files = @('package\lib\addon-web-links.js') },
     @{ Name = 'addon-webgl'; Version = '0.19.0'; Url = 'https://registry.npmjs.org/@xterm/addon-webgl/-/addon-webgl-0.19.0.tgz'
        Sha512 = 'b3fMOsyLVuCeNJWxolACEUED0vm7qC0cy4wRvf3oURSzDTYVQiGPhTnhWZwIHdvC48Y+oLhvYXnY4XDXPoJo6A=='
-       Files = @('package\lib\addon-webgl.js') }
+       Files = @('package\lib\addon-webgl.js') },
+    @{ Name = 'addon-search'; Version = '0.16.0'; Url = 'https://registry.npmjs.org/@xterm/addon-search/-/addon-search-0.16.0.tgz'
+       Sha512 = '9OeuBFu0/uZJPu+9AHKY6g/w0Czyb/Ut0A5t79I4ULoU4IfU5BEpPFVGQxP4zTTMdfZEYkVIRYbHBX1xWwjeSA=='
+       Files = @('package\lib\addon-search.js') }
 )
 
 function Get-Sha512Base64([string]$path) {
@@ -255,11 +262,24 @@ function Get-Sha512Base64([string]$path) {
     finally { $stream.Dispose(); $sha.Dispose() }
 }
 
+# Whether the fetched terminal assets are the ones listed above. A build
+# with an older set would start, and its terminal page would stop at the
+# first script it cannot find.
+function Test-AssetsCurrent {
+    $stamp = Join-Path $App 'Toolbox\Assets\Terminal\xterm\versions.txt'
+    $wanted = ($XtermPackages | ForEach-Object { "$($_.Name)@$($_.Version) sha512-$($_.Sha512)" }) -join "`n"
+    return ((Test-Path $stamp) -and (((Get-Content $stamp -Raw).Trim() -replace "`r", '') -eq $wanted))
+}
+
+function Assert-Assets {
+    if (-not (Test-AssetsCurrent)) { throw 'the terminal assets are missing or out of date; run: tools\build.ps1 assets' }
+}
+
 function Build-Assets {
     $dest = Join-Path $App 'Toolbox\Assets\Terminal\xterm'
     $stamp = Join-Path $dest 'versions.txt'
     $wanted = ($XtermPackages | ForEach-Object { "$($_.Name)@$($_.Version) sha512-$($_.Sha512)" }) -join "`n"
-    if ((Test-Path $stamp) -and ((Get-Content $stamp -Raw).Trim() -eq $wanted)) {
+    if (Test-AssetsCurrent) {
         Write-Host "ok: xterm.js assets are current ($dest)"
         return
     }
@@ -298,7 +318,7 @@ function Build-App {
     Assert-Tool 'dotnet' 'Install the .NET SDK: winget install Microsoft.DotNet.SDK.10'
     if (-not (Test-Path (Join-Path $App 'Generated\toolbox_core.cs'))) { throw 'no generated bindings; run: tools\build.ps1 core' }
     if (-not (Test-Path (Join-Path $App "runtimes\$Rid\native\toolbox_core.dll"))) { throw "no core DLL for $Rid; run: tools\build.ps1 core -Arch $Arch" }
-    if (-not (Test-Path (Join-Path $App 'Toolbox\Assets\Terminal\xterm\xterm.js'))) { throw 'no terminal assets; run: tools\build.ps1 assets' }
+    Assert-Assets
 
     $running = @(Get-RunningBuild)
     if ($running.Count -gt 0) {
@@ -336,7 +356,7 @@ function New-Package {
     Assert-Tool 'dotnet' 'Install the .NET SDK: winget install Microsoft.DotNet.SDK.10'
     if (-not (Test-Path (Join-Path $App 'Generated\toolbox_core.cs'))) { throw 'no generated bindings; run: tools\build.ps1 core' }
     if (-not (Test-Path (Join-Path $App "runtimes\$Rid\native\toolbox_core.dll"))) { throw "no core DLL for $Rid; run: tools\build.ps1 core -Arch $Arch" }
-    if (-not (Test-Path (Join-Path $App 'Toolbox\Assets\Terminal\xterm\xterm.js'))) { throw 'no terminal assets; run: tools\build.ps1 assets' }
+    Assert-Assets
 
     $number = Get-BuildNumber
     $name = "Toolbox-$Version-win-$Arch"
@@ -358,9 +378,9 @@ function New-Package {
     }
     Invoke-Native 'dotnet publish' {
         dotnet publish $project -c Release -r $Rid --self-contained true "-p:ToolboxBuild=$number" `
-            -p:DebugType=none -p:DebugSymbols=false -o $stage --nologo -v minimal
+            -p:ToolboxPackaged=true -p:DebugType=none -p:DebugSymbols=false -o $stage --nologo -v minimal
     }
-    foreach ($needed in 'Toolbox.exe', 'toolbox_core.dll', 'WebView2Loader.dll', 'Assets\Terminal\terminal.html', 'Assets\Terminal\xterm\xterm.js') {
+    foreach ($needed in 'Toolbox.exe', 'toolbox_core.dll', 'WebView2Loader.dll', 'Assets\Terminal\terminal.html', 'Assets\Terminal\xterm\xterm.js', 'Assets\Terminal\xterm\addon-search.js') {
         if (-not (Test-Path (Join-Path $stage $needed))) { throw "the package is missing $needed" }
     }
     # What is built here must not tell the recipient where it was built.
@@ -368,6 +388,11 @@ function New-Package {
     if ($telling.Count -gt 0) {
         throw "$($telling -join ', ') contains a path under this machine's profile folder. Run: tools\build.ps1 core -Arch $Arch (it rewrites those paths), then package again."
     }
+
+    # The list of what this version puts into its folder. An update removes
+    # the files the old list names and the new version no longer has.
+    $files = @(Get-ChildItem $stage -Recurse -File | ForEach-Object { $_.FullName.Substring($stage.Length + 1).Replace('\', '/') }) + 'files.txt' | Sort-Object -Unique
+    [System.IO.File]::WriteAllText((Join-Path $stage 'files.txt'), (($files -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
 
     Step "package: $name.zip"
     Invoke-Native 'tar' { tar.exe -a -c -f $zip -C $release $name }
@@ -379,6 +404,45 @@ function New-Package {
     [System.IO.File]::WriteAllText((Join-Path $release 'SHA256SUMS'), (($lines -join "`n") + "`n"), [System.Text.Encoding]::ASCII)
     Write-Host ("ok: {0} ({1:N0} MB)" -f $zip, ((Get-Item $zip).Length / 1MB))
     Write-Host "ok: $(Join-Path $release 'SHA256SUMS')"
+}
+
+# What installed copies read to learn about this version: update.json, with
+# each package's length and SHA-256 and the release notes, and its signature
+# made with the update key. Both architectures have to be packaged, from the
+# current commit. Without these two files on a release, installed copies see
+# no update; with a wrong signature they refuse it.
+function New-Feed {
+    $release = Join-Path $Build 'release'
+    $number = Get-BuildNumber
+    $packages = [ordered]@{}
+    foreach ($rid in 'win-arm64', 'win-x64') {
+        $name = "Toolbox-$Version-$rid"
+        $zip = Join-Path $release "$name.zip"
+        $assembly = Join-Path $release "$name\Toolbox.dll"
+        if (-not (Test-Path $zip) -or -not (Test-Path $assembly)) {
+            throw "no package for $rid; run: tools\build.ps1 core package -Arch $($rid -replace 'win-', '')"
+        }
+        $built = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($assembly).FilePrivatePart
+        if ($built -ne $number) { throw "$name.zip is build $built, but the current commit is number $number. Package again from this commit." }
+        $packages[$rid] = [ordered]@{
+            file   = "$name.zip"
+            size   = (Get-Item $zip).Length
+            sha256 = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+    $notes = ''
+    $notesPath = Join-Path $Root "docs\release-notes\$Version.md"
+    if (Test-Path $notesPath) { $notes = [System.IO.File]::ReadAllText($notesPath, [System.Text.Encoding]::UTF8).Trim() -replace "`r`n", "`n" }
+    $feed = [ordered]@{ format = 1; version = $Version; build = $number; notes = $notes; packages = $packages }
+    $path = Join-Path $release 'update.json'
+    [System.IO.File]::WriteAllText($path, (($feed | ConvertTo-Json -Depth 5) -replace "`r`n", "`n") + "`n", (New-Object System.Text.UTF8Encoding($false)))
+
+    Step 'feed: signing update.json'
+    $keys = Join-Path $PSScriptRoot 'update-key.ps1'
+    & $keys check
+    & $keys sign -File $path
+    & $keys verify -File $path
+    Write-Host "ok: $path (version $Version, build $number)"
 }
 
 function Start-App {
@@ -426,6 +490,7 @@ foreach ($t in $Targets) {
         'test' { Test-All }
         'run' { Start-App }
         'package' { New-Package }
+        'feed' { New-Feed }
         'clean' { Clear-All }
     }
 }

@@ -138,7 +138,9 @@ pub struct Provider {
     pub id: String,
     pub name: String,
     pub kind: ProviderKind,
-    /// Folder the generated objects are placed under.
+    /// The provider's own folder, which the generated objects are placed
+    /// under: the folder it sits in plus its name. Saving sets the last
+    /// component from the name, so a rename moves the folder.
     pub folder: String,
     /// 0 disables automatic refresh.
     pub auto_refresh_minutes: u32,
@@ -210,7 +212,7 @@ impl ConnectionStore {
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<Arc<Self>, CoreError> {
         let path = PathBuf::from(path);
-        let doc = if path.exists() {
+        let mut doc = if path.exists() {
             let text = fs::read_to_string(&path)?;
             if text.trim().is_empty() {
                 Document::default()
@@ -220,6 +222,7 @@ impl ConnectionStore {
         } else {
             Document::default()
         };
+        separate_provider_folders(&mut doc);
         Ok(Arc::new(Self {
             path,
             doc: Mutex::new(doc),
@@ -347,25 +350,16 @@ impl ConnectionStore {
         lock_or_recover(&self.doc).providers.iter().find(|p| p.id == id).cloned()
     }
 
-    pub fn upsert_provider(&self, mut provider: Provider) -> Result<Provider, CoreError> {
-        if provider.name.trim().is_empty() {
-            return Err(CoreError::Invalid("name is required".into()));
-        }
-        if let ProviderKind::ActiveDirectory { server, search_base, .. } = &provider.kind {
-            if server.trim().is_empty() {
-                return Err(CoreError::Invalid("LDAP server is required".into()));
-            }
-            if search_base.trim().is_empty() {
-                return Err(CoreError::Invalid("search base is required".into()));
-            }
-        }
-        provider.folder = normalize_folder(&provider.folder)
-            .or_else(|| normalize_folder(&provider.name))
-            .ok_or_else(|| CoreError::Invalid("name is required".into()))?;
-        if provider.id.trim().is_empty() {
-            provider.id = new_id();
-        }
+    /// The provider as `upsert_provider` would store it (name trimmed, folder
+    /// named after it), or what it would refuse, without saving anything:
+    /// the app needs both before it writes the accounts typed into a provider.
+    pub fn validate_provider(&self, provider: Provider) -> Result<Provider, CoreError> {
+        checked_provider(&lock_or_recover(&self.doc), provider)
+    }
+
+    pub fn upsert_provider(&self, provider: Provider) -> Result<Provider, CoreError> {
         let mut doc = lock_or_recover(&self.doc);
+        let mut provider = checked_provider(&doc, provider)?;
         if let Some(parent) = parent_path(&provider.folder) {
             register_folder(&mut doc, &parent);
         }
@@ -379,7 +373,8 @@ impl ConnectionStore {
                     provider.last_status = old.last_status.clone();
                 }
                 // Everything inside a provider's folder (what it generated,
-                // and anything placed there by hand) follows a rename.
+                // and anything placed there by hand) follows a rename or a
+                // new location.
                 if old.folder != provider.folder {
                     move_folder_contents(&mut doc, &old.folder, &provider.folder);
                 }
@@ -395,15 +390,29 @@ impl ConnectionStore {
     /// Removes a provider and everything it generated.
     pub fn delete_provider(&self, id: String) -> Result<bool, CoreError> {
         let mut doc = lock_or_recover(&self.doc);
-        let before = doc.providers.len();
-        doc.providers.retain(|p| p.id != id);
-        let removed = doc.providers.len() != before;
-        if removed {
-            doc.connections.retain(|c| c.source.as_deref() != Some(id.as_str()));
-            doc.credentials.retain(|c| c.source.as_deref() != Some(id.as_str()));
-            write_document(&self.path, &doc)?;
+        let Some(index) = doc.providers.iter().position(|p| p.id == id) else {
+            return Ok(false);
+        };
+        let folder = doc.providers.remove(index).folder;
+        doc.connections.retain(|c| c.source.as_deref() != Some(id.as_str()));
+        doc.credentials.retain(|c| c.source.as_deref() != Some(id.as_str()));
+        // With nothing else inside, the provider's folder goes with it, and
+        // so does a credential assigned to the folder, which must not wait
+        // there for the next one of that name. The accounts typed into the
+        // provider do not count, nor does the folder entry saving them
+        // made: the app deletes them with their secrets right after.
+        let inside = |f: &str| f == folder || f.starts_with(&format!("{folder}/"));
+        let own_account = |c: &Credential| c.source.is_none() && c.id.starts_with(&format!("{id}#"));
+        let occupied = doc.folders.iter().any(|f| *f != folder && inside(f))
+            || doc.providers.iter().any(|p| inside(&p.folder))
+            || doc.connections.iter().any(|c| c.folder.as_deref().is_some_and(inside))
+            || doc.credentials.iter().any(|c| !own_account(c) && c.folder.as_deref().is_some_and(inside));
+        if !occupied {
+            doc.folders.retain(|f| *f != folder);
+            doc.folder_credentials.retain(|f, _| !inside(f));
         }
-        Ok(removed)
+        write_document(&self.path, &doc)?;
+        Ok(true)
     }
 
     // ----- folders -----
@@ -433,7 +442,16 @@ impl ConnectionStore {
             return Err(CoreError::Invalid("a folder cannot be moved into itself".into()));
         }
         let mut doc = lock_or_recover(&self.doc);
+        check_provider_folders(&doc, &from, &to)?;
+        let provider = doc.providers.iter().position(|p| p.folder == from);
         move_folder_contents(&mut doc, &from, &to);
+        // A provider is named after its folder, so a new name for the
+        // folder is a new name for the provider.
+        if let Some(index) = provider {
+            if leaf_name(&from) != leaf_name(&to) {
+                doc.providers[index].name = leaf_name(&to).to_string();
+            }
+        }
         sort_document(&mut doc);
         write_document(&self.path, &doc)?;
         Ok(to)
@@ -556,15 +574,12 @@ impl ConnectionStore {
 
     /// Moves a provider (with everything it generated) under `parent`.
     pub fn move_provider(&self, id: String, parent: Option<String>) -> Result<(), CoreError> {
-        let provider = self
+        let mut provider = self
             .get_provider(id)
             .ok_or_else(|| CoreError::Invalid("no such provider".into()))?;
-        let leaf = provider.folder.rsplit('/').next().unwrap_or(&provider.folder).to_string();
-        let target = match parent.as_deref().and_then(normalize_folder) {
-            Some(parent) => format!("{parent}/{leaf}"),
-            None => leaf,
-        };
-        self.rename_folder(provider.folder, target).map(|_| ())
+        let parent = parent.as_deref().and_then(normalize_folder);
+        provider.folder = provider_folder(parent.as_deref(), &provider.name);
+        self.upsert_provider(provider).map(|_| ())
     }
 }
 
@@ -584,6 +599,20 @@ pub fn normalize_folder(path: &str) -> Option<String> {
 
 fn parent_path(path: &str) -> Option<String> {
     path.rsplit_once('/').map(|(parent, _)| parent.to_string())
+}
+
+/// The last component of a folder path: the folder's own name.
+fn leaf_name(path: &str) -> &str {
+    path.rsplit_once('/').map_or(path, |(_, leaf)| leaf)
+}
+
+/// Where a provider called `name` lives inside `location` (`None` for the
+/// top level): a folder named after it.
+fn provider_folder(location: Option<&str>, name: &str) -> String {
+    match location {
+        Some(location) => format!("{location}/{name}"),
+        None => name.to_string(),
+    }
 }
 
 /// Adds a folder and every ancestor to the explicit list.
@@ -648,6 +677,150 @@ fn replace_prefix(path: &str, from: &str, to: &str) -> Option<String> {
     }
 }
 
+/// A provider ready to save: required fields present, its folder named
+/// after it and not another provider's, an id assigned.
+fn checked_provider(doc: &Document, mut provider: Provider) -> Result<Provider, CoreError> {
+    provider.name = provider.name.trim().to_string();
+    if provider.name.is_empty() {
+        return Err(CoreError::Invalid("name is required".into()));
+    }
+    if provider.name.contains('/') {
+        return Err(CoreError::Invalid(
+            "a provider's name cannot contain “/”; its location says which folder it is in".into(),
+        ));
+    }
+    if let ProviderKind::ActiveDirectory { server, search_base, .. } = &provider.kind {
+        if server.trim().is_empty() {
+            return Err(CoreError::Invalid("LDAP server is required".into()));
+        }
+        if search_base.trim().is_empty() {
+            return Err(CoreError::Invalid("search base is required".into()));
+        }
+    }
+    // The folder given says where the provider sits; its own folder there
+    // always carries its name, so the tree and the store cannot disagree.
+    let location = normalize_folder(&provider.folder).and_then(|folder| parent_path(&folder));
+    provider.folder = provider_folder(location.as_deref(), &provider.name);
+    if provider.id.trim().is_empty() {
+        provider.id = new_id();
+    }
+    match doc.providers.iter().find(|p| p.id == provider.id) {
+        // A provider that is renamed or moved takes its folder's contents along.
+        Some(old) => {
+            if provider.folder.starts_with(&format!("{}/", old.folder)) {
+                return Err(CoreError::Invalid("a provider cannot be moved into its own folder".into()));
+            }
+            check_provider_folders(doc, &old.folder, &provider.folder)?
+        }
+        None => {
+            if let Some(owner) = doc.providers.iter().find(|p| p.folder == provider.folder) {
+                return Err(folder_taken(&provider.folder, owner));
+            }
+        }
+    }
+    Ok(provider)
+}
+
+/// Refuses moving `from` to `to` when a provider would land in a folder
+/// another provider owns. One folder, one provider: the sidebar shows a
+/// provider as its folder, so a second one there is invisible while
+/// everything it generates shows up next to the first one's.
+fn check_provider_folders(doc: &Document, from: &str, to: &str) -> Result<(), CoreError> {
+    let moved = |p: &Provider| replace_prefix(&p.folder, from, to);
+    for target in doc.providers.iter().filter_map(moved) {
+        if let Some(owner) = doc.providers.iter().find(|p| moved(p).is_none() && p.folder == target) {
+            return Err(folder_taken(&target, owner));
+        }
+    }
+    Ok(())
+}
+
+fn folder_taken(folder: &str, owner: &Provider) -> CoreError {
+    CoreError::Invalid(format!(
+        "the folder “{folder}” already belongs to the provider “{}”; choose another name or location",
+        owner.name
+    ))
+}
+
+/// Gives every provider a folder of its own in a document that has two in
+/// one, which versions up to 0.3.0 let happen (every computer then showed
+/// twice and the second provider could not be reached to edit or delete).
+/// The folder stays with the provider it is named after, or else with the
+/// first. Any other moves, with what it generated and the accounts typed
+/// into it (`<id>#bind` and so on), to a folder of its own next to the
+/// shared one, where it is visible and can be deleted. That folder carries
+/// its name, as every provider's does; when the name leads to a folder in
+/// use or is a neighbouring provider's too, the provider is renamed
+/// `<name> 2` (or 3, …) to get one and to tell the two apart. A credential
+/// assigned to the shared folder is assigned to the new one as well, so
+/// connections that inherit it keep working.
+fn separate_provider_folders(doc: &mut Document) {
+    let mut separated = false;
+    for index in 0..doc.providers.len() {
+        let shared = doc.providers[index].folder.clone();
+        let sharing: Vec<usize> = (0..doc.providers.len()).filter(|i| doc.providers[*i].folder == shared).collect();
+        let named_after = |i: &&usize| doc.providers[**i].name == leaf_name(&shared);
+        if sharing.iter().find(named_after).or(sharing.first()) == Some(&index) {
+            continue;
+        }
+        let location = parent_path(&shared);
+        let in_use = |path: &str| {
+            let inside = |f: &str| f == path || f.starts_with(&format!("{path}/"));
+            doc.folders.iter().any(|f| inside(f))
+                || doc.providers.iter().any(|p| inside(&p.folder))
+                || doc.connections.iter().any(|c| c.folder.as_deref().is_some_and(inside))
+                || doc.credentials.iter().any(|c| c.folder.as_deref().is_some_and(inside))
+        };
+        let named_alike = |name: &str| {
+            let mut others = doc.providers.iter().enumerate().filter(|(i, _)| *i != index);
+            others.any(|(_, p)| p.name == name && parent_path(&p.folder) == location)
+        };
+        // Names saved by 0.3.0 and earlier could hold a slash.
+        let mut base = doc.providers[index].name.trim().replace('/', "-");
+        if base.is_empty() {
+            base = leaf_name(&shared).to_string();
+        }
+        let mut n = 1;
+        let (name, own) = loop {
+            let name = if n == 1 { base.clone() } else { format!("{base} {n}") };
+            let folder = provider_folder(location.as_deref(), &name);
+            if !in_use(&folder) && !named_alike(&name) {
+                break (name, folder);
+            }
+            n += 1;
+        };
+        let id = doc.providers[index].id.clone();
+        let account_prefix = format!("{id}#");
+        for c in doc.connections.iter_mut().filter(|c| c.source.as_deref() == Some(id.as_str())) {
+            if let Some(renamed) = c.folder.as_deref().and_then(|f| replace_prefix(f, &shared, &own)) {
+                c.folder = Some(renamed);
+            }
+        }
+        let belongs = |c: &Credential| match &c.source {
+            Some(source) => *source == id,
+            None => c.id.starts_with(&account_prefix),
+        };
+        for c in doc.credentials.iter_mut().filter(|c| belongs(c)) {
+            if let Some(renamed) = c.folder.as_deref().and_then(|f| replace_prefix(f, &shared, &own)) {
+                c.folder = Some(renamed);
+            }
+        }
+        let assigned: Vec<(String, String)> = doc
+            .folder_credentials
+            .iter()
+            .filter_map(|(path, id)| replace_prefix(path, &shared, &own).map(|renamed| (renamed, id.clone())))
+            .collect();
+        doc.folder_credentials.extend(assigned);
+        let provider = &mut doc.providers[index];
+        provider.folder = own;
+        provider.name = name;
+        separated = true;
+    }
+    if separated {
+        sort_document(doc);
+    }
+}
+
 #[uniffi::export(async_runtime = "tokio")]
 impl ConnectionStore {
     /// Runs a provider and replaces what it generated last time.
@@ -702,7 +875,7 @@ impl ConnectionStore {
 
         let now = epoch_now();
         match outcome {
-            Ok((connections, credentials, warnings)) => {
+            Ok((mut connections, mut credentials, warnings)) => {
                 let result = SyncResult {
                     provider_id: id.clone(),
                     connections: connections.len() as u32,
@@ -714,6 +887,19 @@ impl ConnectionStore {
                     ProviderKind::ActiveDirectory { .. } => format!("{} connections", result.connections),
                 };
                 let mut doc = lock_or_recover(&self.doc);
+                // The answer took a while. A provider deleted meanwhile gets
+                // nothing; one renamed or moved gets it in its folder of now.
+                let Some(folder) = doc.providers.iter().find(|p| p.id == id).map(|p| p.folder.clone()) else {
+                    return Err(CoreError::Invalid("the provider was deleted while it synced".into()));
+                };
+                if folder != provider.folder {
+                    let generated = connections.iter_mut().map(|c| &mut c.folder);
+                    for placed in generated.chain(credentials.iter_mut().map(|c| &mut c.folder)) {
+                        if let Some(moved) = placed.as_deref().and_then(|f| replace_prefix(f, &provider.folder, &folder)) {
+                            *placed = Some(moved);
+                        }
+                    }
+                }
                 doc.connections.retain(|c| c.source.as_deref() != Some(id.as_str()));
                 doc.credentials.retain(|c| c.source.as_deref() != Some(id.as_str()));
                 doc.connections.extend(connections);
@@ -973,6 +1159,36 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_provider_takes_its_folders_credential_along() {
+        let (_dir, store) = open_temp();
+        store.upsert_credential(sample_credential("admin")).unwrap();
+        for id in ["gone", "kept"] {
+            store.upsert_provider(sample_provider(id, id, id)).unwrap();
+            store.set_folder_credential(id.into(), Some("admin".into())).unwrap();
+            let mut account = sample_credential(&format!("{id}#bind"));
+            account.folder = Some(id.into());
+            store.upsert_credential(account).unwrap();
+            let mut generated = sample("dc01");
+            generated.folder = Some(format!("{id}/Domain Controllers"));
+            generated.source = Some(id.into());
+            store.upsert(generated).unwrap();
+        }
+        // Something put there by hand keeps the folder in the tree.
+        let mut by_hand = sample("printer");
+        by_hand.folder = Some("kept/Lab".into());
+        store.upsert(by_hand).unwrap();
+
+        for id in ["gone", "kept"] {
+            assert!(store.delete_provider(id.into()).unwrap());
+        }
+        assert!(!store.delete_provider("gone".into()).unwrap());
+        let assigned: Vec<_> = store.list_folder_credentials().into_iter().map(|f| f.folder).collect();
+        assert_eq!(assigned, vec!["kept"]);
+        assert_eq!(store.list_folders(), vec!["kept", "kept/Lab"]);
+        assert_eq!(store.list().into_iter().map(|c| c.name).collect::<Vec<_>>(), vec!["printer"]);
+    }
+
+    #[test]
     fn provider_validation() {
         let (_dir, store) = open_temp();
         let ad = Provider {
@@ -993,6 +1209,294 @@ mod tests {
             last_status: None,
         };
         assert!(matches!(store.upsert_provider(ad), Err(CoreError::Invalid(_))));
+    }
+
+    fn sample_provider(id: &str, name: &str, folder: &str) -> Provider {
+        Provider {
+            id: id.into(),
+            name: name.into(),
+            kind: ProviderKind::OnePassword { op_path: None, account: None, vaults: vec![] },
+            folder: folder.into(),
+            auto_refresh_minutes: 0,
+            last_sync_epoch: None,
+            last_status: None,
+        }
+    }
+
+    #[test]
+    fn a_folder_takes_one_provider() {
+        let (_dir, store) = open_temp();
+        let first = store.upsert_provider(sample_provider("ad", "corp", "Work/corp")).unwrap();
+
+        // A new provider cannot be saved into the folder, however it is spelled.
+        let second = sample_provider("", " corp ", " Work / corp ");
+        for refused in [store.validate_provider(second.clone()), store.upsert_provider(second)] {
+            let Err(CoreError::Invalid(message)) = refused else { panic!("accepted a second provider") };
+            assert!(message.contains("the folder “Work/corp” already belongs to the provider “corp”"), "{message}");
+        }
+        assert_eq!(store.list_providers(), vec![first.clone()]);
+        // Saving the owner again is not a clash.
+        assert_eq!(store.validate_provider(first.clone()).unwrap(), first);
+        store.upsert_provider(first).unwrap();
+
+        // Nor can an existing one get there by a new name, a new location,
+        // a move or a folder rename.
+        let mut lab = store.upsert_provider(sample_provider("lab", "lab", "Work/lab")).unwrap();
+        lab.name = "corp".into();
+        assert!(matches!(store.upsert_provider(lab), Err(CoreError::Invalid(_))));
+        assert!(matches!(store.rename_folder("Work/lab".into(), "Work/corp".into()), Err(CoreError::Invalid(_))));
+        let mut other = store.upsert_provider(sample_provider("other", "corp", "Archive/corp")).unwrap();
+        other.folder = "Work/corp".into();
+        assert!(matches!(store.upsert_provider(other), Err(CoreError::Invalid(_))));
+        assert!(matches!(store.move_provider("other".into(), Some("Work".into())), Err(CoreError::Invalid(_))));
+        assert!(matches!(store.rename_folder("Archive".into(), "Work".into()), Err(CoreError::Invalid(_))));
+        let placed = |id: &str| store.get_provider(id.into()).map(|p| (p.name, p.folder)).unwrap();
+        assert_eq!(placed("lab"), ("lab".into(), "Work/lab".into()));
+        assert_eq!(placed("other"), ("corp".into(), "Archive/corp".into()));
+        assert_eq!(placed("ad"), ("corp".into(), "Work/corp".into()));
+
+        // A free folder is fine.
+        store.move_provider("other".into(), Some("Work/Old".into())).unwrap();
+        assert_eq!(placed("other"), ("corp".into(), "Work/Old/corp".into()));
+    }
+
+    #[test]
+    fn a_providers_folder_is_named_after_it() {
+        let (_dir, store) = open_temp();
+        // The folder given says where the provider goes; the name says what
+        // its own folder there is called.
+        let mut provider = store.upsert_provider(sample_provider("ad", " corp-ad ", "Work/anything")).unwrap();
+        assert_eq!((provider.name.as_str(), provider.folder.as_str()), ("corp-ad", "Work/corp-ad"));
+        assert_eq!(store.validate_provider(sample_provider("", "Logins", "")).unwrap().folder, "Logins");
+
+        let mut generated = sample("dc01");
+        generated.folder = Some("Work/corp-ad/Domain Controllers".into());
+        generated.source = Some("ad".into());
+        let generated = store.upsert(generated).unwrap();
+        let mut by_hand = sample("printer");
+        by_hand.folder = Some("Work/corp-ad/Lab".into());
+        let by_hand = store.upsert(by_hand).unwrap();
+        let mut bind = sample_credential("ad#bind");
+        bind.folder = Some("Work/corp-ad".into());
+        store.upsert_credential(bind).unwrap();
+        store.set_folder_credential("Work/corp-ad".into(), Some("ad#bind".into())).unwrap();
+        let folder = |id: &str| store.get(id.into()).unwrap().folder.unwrap();
+
+        // A folder with the new name may be there already, with things in
+        // it: the two become one.
+        let mut bind = store.get_credential("ad#bind".into()).unwrap();
+        bind.folder = Some("Work/Corp AD".into());
+        store.upsert_credential(bind).unwrap();
+        provider.name = "Corp AD".into();
+        store.upsert_provider(provider.clone()).unwrap();
+        assert_eq!(folder(&generated.id), "Work/Corp AD/Domain Controllers");
+        assert_eq!(store.list_folders(), vec!["Work", "Work/Corp AD", "Work/Corp AD/Lab"]);
+
+        // A new name moves the folder and everything in it: what the
+        // provider generated, what was put there by hand, its own account
+        // and the credential assigned to the folder.
+        provider.name = "CORP.EXAMPLE".into();
+        let renamed = store.upsert_provider(provider.clone()).unwrap();
+        assert_eq!(renamed.folder, "Work/CORP.EXAMPLE");
+        assert_eq!(folder(&generated.id), "Work/CORP.EXAMPLE/Domain Controllers");
+        assert_eq!(folder(&by_hand.id), "Work/CORP.EXAMPLE/Lab");
+        assert_eq!(store.get_credential("ad#bind".into()).unwrap().folder.as_deref(), Some("Work/CORP.EXAMPLE"));
+        let assigned: Vec<_> = store.list_folder_credentials().into_iter().map(|f| f.folder).collect();
+        assert_eq!(assigned, vec!["Work/CORP.EXAMPLE"]);
+        assert_eq!(store.list_folders(), vec!["Work", "Work/CORP.EXAMPLE", "Work/CORP.EXAMPLE/Lab"]);
+
+        // A slash in the name would make it two folders.
+        provider.name = "CORP/EXAMPLE".into();
+        let Err(CoreError::Invalid(message)) = store.upsert_provider(provider) else { panic!("accepted a slash") };
+        assert!(message.contains("cannot contain “/”"), "{message}");
+
+        // A move keeps the name, and cannot go into the provider's own folder.
+        store.move_provider("ad".into(), None).unwrap();
+        let placed = || store.get_provider("ad".into()).map(|p| (p.name, p.folder)).unwrap();
+        assert_eq!(placed(), ("CORP.EXAMPLE".into(), "CORP.EXAMPLE".into()));
+        assert_eq!(folder(&generated.id), "CORP.EXAMPLE/Domain Controllers");
+        assert!(matches!(
+            store.move_provider("ad".into(), Some("CORP.EXAMPLE/Lab".into())),
+            Err(CoreError::Invalid(_))
+        ));
+
+        // Renaming the folder renames the provider; moving it does not.
+        store.rename_folder("CORP.EXAMPLE".into(), "Lab/Directory".into()).unwrap();
+        assert_eq!(placed(), ("Directory".into(), "Lab/Directory".into()));
+        store.rename_folder("Lab".into(), "Bench".into()).unwrap();
+        assert_eq!(placed(), ("Directory".into(), "Bench/Directory".into()));
+        assert_eq!(folder(&generated.id), "Bench/Directory/Domain Controllers");
+        let reopened = ConnectionStore::open(store.path.to_string_lossy().into()).unwrap();
+        assert_eq!(reopened.list_providers(), store.list_providers());
+    }
+
+    #[test]
+    fn a_folder_from_an_older_version_takes_the_name_at_the_next_save() {
+        // Up to 0.3.0 a rename changed the name only, so a store can hold a
+        // provider whose folder still has the name it was created with.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.json");
+        let mut generated = sample("dc01");
+        generated.folder = Some("Work/AD/Domain Controllers".into());
+        generated.source = Some("ad".into());
+        let doc = Document {
+            version: DOCUMENT_VERSION,
+            connections: vec![generated],
+            providers: vec![sample_provider("ad", "Active Directory", "Work/AD"), sample_provider("op", "Logins", "Work/1P")],
+            ..Document::default()
+        };
+        write_document(&path, &doc).unwrap();
+
+        // Opening moves nothing.
+        let store = ConnectionStore::open(path.to_string_lossy().into()).unwrap();
+        let folder = |id: &str| store.get_provider(id.into()).unwrap().folder;
+        assert_eq!((folder("ad"), folder("op")), ("Work/AD".into(), "Work/1P".into()));
+
+        // Saving it does, and so does moving it.
+        store.upsert_provider(store.get_provider("ad".into()).unwrap()).unwrap();
+        assert_eq!(folder("ad"), "Work/Active Directory");
+        assert_eq!(store.list()[0].folder.as_deref(), Some("Work/Active Directory/Domain Controllers"));
+        store.move_provider("op".into(), Some("Work".into())).unwrap();
+        assert_eq!(folder("op"), "Work/Logins");
+    }
+
+    #[test]
+    fn opening_separates_providers_that_share_a_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.json");
+        let in_folder = |id: &str, folder: &str, source: Option<&str>| {
+            let mut c = sample("dc01");
+            c.id = id.into();
+            c.folder = Some(folder.into());
+            c.source = source.map(Into::into);
+            c
+        };
+        let credential_in = |id: &str, folder: &str, source: Option<&str>| {
+            let mut c = sample_credential(id);
+            c.folder = Some(folder.into());
+            c.source = source.map(Into::into);
+            c
+        };
+        let doc = Document {
+            version: DOCUMENT_VERSION,
+            connections: vec![
+                in_folder("ad1:dc01", "Work/AD/Domain Controllers", Some("ad1")),
+                in_folder("ad2:dc01", "Work/AD/Domain Controllers", Some("ad2")),
+                in_folder("by-hand", "Work/AD", None),
+                in_folder("elsewhere", "Work/AD 2", None),
+                in_folder("old:dc01", "Lab/dir/Domain Controllers", Some("old")),
+                in_folder("new:dc01", "Lab/dir/Domain Controllers", Some("new")),
+            ],
+            credentials: vec![
+                credential_in("ad2#bind", "Work/AD", None),
+                credential_in("op:i1", "Work/AD/vault", Some("op")),
+                credential_in("admin", "Work", None),
+            ],
+            providers: vec![
+                sample_provider("ad1", "AD", "Work/AD"),
+                sample_provider("ad2", "AD", "Work/AD"),
+                sample_provider("op", "Logins", "Work/AD"),
+                // Renamed after it was made, then a second one made under the first name.
+                sample_provider("old", "Directory", "Lab/dir"),
+                sample_provider("new", "dir", "Lab/dir"),
+                // Two renamed alike, in a folder neither is named after.
+                sample_provider("x1", "Corp", "Lab/shared"),
+                sample_provider("x2", "Corp", "Lab/shared"),
+                sample_provider("x3", "Old/Corp", "Lab/shared"),
+            ],
+            folder_credentials: BTreeMap::from([("Work/AD".to_string(), "admin".to_string())]),
+            ..Document::default()
+        };
+        write_document(&path, &doc).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+
+        let store = ConnectionStore::open(path.to_string_lossy().into()).unwrap();
+        let folder = |id: &str| store.get(id.into()).unwrap().folder.unwrap();
+        let provider = |id: &str| store.get_provider(id.into()).map(|p| (p.name, p.folder)).unwrap();
+        // The folder stays with the first provider named after it. Another
+        // goes to the folder its own name gives, with what it generated and
+        // its own accounts, and is numbered when that folder is in use.
+        assert_eq!(provider("ad1"), ("AD".into(), "Work/AD".into()));
+        assert_eq!(provider("ad2"), ("AD 3".into(), "Work/AD 3".into()));
+        assert_eq!(provider("op"), ("Logins".into(), "Work/Logins".into()));
+        assert_eq!(folder("ad1:dc01"), "Work/AD/Domain Controllers");
+        assert_eq!(folder("ad2:dc01"), "Work/AD 3/Domain Controllers");
+        assert_eq!(store.get_credential("ad2#bind".into()).unwrap().folder.as_deref(), Some("Work/AD 3"));
+        assert_eq!(store.get_credential("op:i1".into()).unwrap().folder.as_deref(), Some("Work/Logins/vault"));
+        assert_eq!(folder("by-hand"), "Work/AD");
+        assert_eq!(folder("elsewhere"), "Work/AD 2");
+        assert_eq!(provider("new"), ("dir".into(), "Lab/dir".into()));
+        assert_eq!(provider("old"), ("Directory".into(), "Lab/Directory".into()));
+        assert_eq!(folder("old:dc01"), "Lab/Directory/Domain Controllers");
+        assert_eq!(folder("new:dc01"), "Lab/dir/Domain Controllers");
+        // With no one named after the folder the first keeps it. A name a
+        // neighbour has is numbered too, and a slash cannot stay in one.
+        assert_eq!(provider("x1"), ("Corp".into(), "Lab/shared".into()));
+        assert_eq!(provider("x2"), ("Corp 2".into(), "Lab/Corp 2".into()));
+        assert_eq!(provider("x3"), ("Old-Corp".into(), "Lab/Old-Corp".into()));
+        // What the shared folder's credential reached, it still reaches.
+        let inherited = |folder: &str| store.inherited_credential(Some(folder.into())).map(|f| f.folder);
+        assert_eq!(inherited("Work/AD/Domain Controllers"), Some("Work/AD".into()));
+        assert_eq!(inherited("Work/AD 3/Domain Controllers"), Some("Work/AD 3".into()));
+        assert_eq!(inherited("Work/Logins/vault"), Some("Work/Logins".into()));
+        // Opening alone writes nothing: a file the app cannot write must still open.
+        assert_eq!(fs::read_to_string(&path).unwrap(), written);
+
+        // Now reachable, the duplicate can be deleted, leaving each computer
+        // once and nothing of the duplicate behind.
+        assert!(store.delete_provider("ad2".into()).unwrap());
+        store.delete_credential("ad2#bind".into()).unwrap();
+        let reopened = ConnectionStore::open(path.to_string_lossy().into()).unwrap();
+        let generated: Vec<_> = reopened.list().into_iter().filter_map(|c| c.source.map(|_| c.id)).collect();
+        assert_eq!(generated, vec!["old:dc01", "new:dc01", "ad1:dc01"]);
+        assert_eq!(reopened.get_provider("ad1".into()).unwrap().folder, "Work/AD");
+        let assigned: Vec<_> = reopened.list_folder_credentials().into_iter().map(|f| f.folder).collect();
+        assert_eq!(assigned, vec!["Work/AD", "Work/Logins"]);
+        // What the repair did was saved with that change; a second open has nothing to do.
+        assert_eq!(reopened.list_providers(), store.list_providers());
+    }
+
+    /// Writes a fake `op` that answers only once a file named `go` is next
+    /// to it (or after half a minute), having noted in `op.log` that it was
+    /// asked. On Windows a batch file; `ping` is its way of waiting a second.
+    #[cfg(windows)]
+    fn waiting_op(dir: &Path) -> PathBuf {
+        let path = dir.join("op.cmd");
+        fs::write(
+            &path,
+            "@echo off\r\n\
+             echo %* >> \"%~dp0op.log\"\r\n\
+             set n=0\r\n\
+             :wait\r\n\
+             if exist \"%~dp0go\" goto answer\r\n\
+             set /a n+=1\r\n\
+             if %n% GEQ 30 goto answer\r\n\
+             ping -n 2 127.0.0.1 > nul\r\n\
+             goto wait\r\n\
+             :answer\r\n\
+             echo [{\"id\":\"i1\",\"title\":\"nutanix1\",\"vault\":{\"name\":\"work\"},\"category\":\"LOGIN\"}]\r\n",
+        )
+        .unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn waiting_op(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("op");
+        fs::write(
+            &path,
+            r#"#!/bin/sh
+here="$(dirname "$0")"
+echo "$@" >> "$here/op.log"
+n=0
+while [ ! -e "$here/go" ] && [ "$n" -lt 600 ]; do sleep 0.05; n=$((n + 1)); done
+echo '[{"id":"i1","title":"nutanix1","vault":{"name":"work"},"category":"LOGIN"}]'
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
     }
 
     /// Writes a fake `op` that answers `item list` and `item get` with canned JSON.
@@ -1090,6 +1594,54 @@ esac
         let synced = store.get_provider(provider.id).unwrap();
         assert!(synced.last_sync_epoch.is_some());
         assert_eq!(synced.last_status.as_deref(), Some("4 credentials"));
+    }
+
+    #[tokio::test]
+    async fn a_sync_lands_where_the_provider_is_by_then() {
+        let (dir, store) = open_temp();
+        // An `op` that answers only once a file named `go` is next to it,
+        // so the provider can change while its sync waits for the answer.
+        let op = waiting_op(dir.path());
+        let (asked, go) = (dir.path().join("op.log"), dir.path().join("go"));
+        let mut provider = sample_provider("op", "Logins", "Work/Logins");
+        provider.kind = ProviderKind::OnePassword {
+            op_path: Some(op.to_string_lossy().into()),
+            account: None,
+            vaults: vec![],
+        };
+        let mut provider = store.upsert_provider(provider).unwrap();
+        let start = || {
+            let store = store.clone();
+            tokio::spawn(async move { store.sync_provider("op".into(), None).await })
+        };
+        let wait_until_asked = || async {
+            while !asked.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        };
+
+        // Renamed meanwhile: what the sync brings goes to the new folder.
+        let sync = start();
+        wait_until_asked().await;
+        provider.name = "Vault items".into();
+        store.upsert_provider(provider).unwrap();
+        fs::write(&go, "").unwrap();
+        assert_eq!(sync.await.unwrap().unwrap().credentials, 1);
+        let folders: Vec<_> = store.list_credentials().into_iter().filter_map(|c| c.folder).collect();
+        assert_eq!(folders, vec!["Work/Vault items/work"]);
+        assert_eq!(store.get_provider("op".into()).unwrap().last_status.as_deref(), Some("1 credentials"));
+
+        // Deleted meanwhile: nothing is left behind without a provider.
+        fs::remove_file(&go).unwrap();
+        fs::remove_file(&asked).unwrap();
+        let sync = start();
+        wait_until_asked().await;
+        assert!(store.delete_provider("op".into()).unwrap());
+        fs::write(&go, "").unwrap();
+        assert!(matches!(sync.await.unwrap(), Err(CoreError::Invalid(_))));
+        assert!(store.list_credentials().is_empty());
+        let reopened = ConnectionStore::open(store.path.to_string_lossy().into()).unwrap();
+        assert!(reopened.list_credentials().is_empty() && reopened.list_providers().is_empty());
     }
 
     #[test]
@@ -1201,29 +1753,6 @@ esac
             reopened.inherited_credential(Some("Work/X".into())).map(|f| f.credential_id),
             Some("admin".into())
         );
-    }
-
-    #[test]
-    fn provider_rename_carries_manual_items_inside() {
-        let (_dir, store) = open_temp();
-        let mut provider = store
-            .upsert_provider(Provider {
-                id: "ad".into(),
-                name: "corp-ad".into(),
-                kind: ProviderKind::OnePassword { op_path: None, account: None, vaults: vec![] },
-                folder: "Work/corp-ad".into(),
-                auto_refresh_minutes: 0,
-                last_sync_epoch: None,
-                last_status: None,
-            })
-            .unwrap();
-        let mut bind = sample_credential("ad#bind");
-        bind.folder = Some("Work/corp-ad".into());
-        store.upsert_credential(bind).unwrap();
-        provider.folder = "Work/CORP.EXAMPLE".into();
-        store.upsert_provider(provider).unwrap();
-        assert_eq!(store.get_credential("ad#bind".into()).unwrap().folder.as_deref(), Some("Work/CORP.EXAMPLE"));
-        assert!(!store.list_folders().iter().any(|f| f.ends_with("corp-ad")));
     }
 
     #[test]

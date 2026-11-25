@@ -9,22 +9,27 @@
         tools\e2e\ui.ps1 invoke  -Id <automationId> | -Name <name>     button, menu item, tree item
         tools\e2e\ui.ps1 expand  -Id ... | -Name ...   /  collapse / select
         tools\e2e\ui.ps1 setvalue -Id ... -Text <text>                 text boxes
-        tools\e2e\ui.ps1 click   -Id ... | -Name ... [-Right] [-Double]  real mouse click on its centre
+        tools\e2e\ui.ps1 value   -Id ...               what a text box holds
+        tools\e2e\ui.ps1 focus   -Id ... | -Name ...   puts the keyboard there
+        tools\e2e\ui.ps1 press  -Id <automationId>    a button of a system dialog, by window message
+                                                       (-Id 14004 is "Yes" in the RDP certificate warning)
+        tools\e2e\ui.ps1 click  -Id ... | -Name ... [-Right] [-Double]  real mouse click on its centre
         tools\e2e\ui.ps1 clickat -X <px> -Y <px> [-Right] [-Double]      relative to the main window
         tools\e2e\ui.ps1 drag    -X <px> -Y <px> -ToX <px> -ToY <px>      relative to the main window
         tools\e2e\ui.ps1 keys    -Keys '<SendKeys syntax>'               e.g. '^+{]}' for Ctrl+Shift+]
         tools\e2e\ui.ps1 text    -Text 'echo hello'                      typed literally
         tools\e2e\ui.ps1 foreground
 
-    "invoke", "expand", "select" and "setvalue" use automation patterns and
-    touch neither the mouse nor the keyboard. "click", "drag", "keys" and
+    "invoke", "expand", "select", "setvalue", "value" and "focus" use
+    automation and touch neither the mouse nor the keyboard; nor does
+    "press", which is for buttons that offer no pattern. "click", "drag", "keys" and
     "text" are real input: they bring the app to the front first and refuse
     to type when another program has the keyboard.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('windows', 'tree', 'find', 'invoke', 'expand', 'collapse', 'select', 'setvalue', 'click', 'clickat', 'drag', 'keys', 'text', 'foreground')]
+    [ValidateSet('windows', 'tree', 'find', 'invoke', 'expand', 'collapse', 'select', 'setvalue', 'value', 'focus', 'press', 'click', 'clickat', 'drag', 'keys', 'text', 'foreground')]
     [string]$Action,
     [string]$Id,
     [string]$Name,
@@ -58,6 +63,7 @@ if (-not ('ToolboxE2E.Input' -as [type])) {
 [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hwnd);
 [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
 [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 '@
 }
@@ -82,6 +88,28 @@ function Get-MainWindow {
     return $main.MainWindowHandle
 }
 
+# Scrolls the sidebar's tree from the top, a page at a time, until a row
+# matching the condition is there. The tree is left where the row was found.
+function Find-InSidebar($condition) {
+    $treeCondition = New-Object System.Windows.Automation.PropertyCondition ($Auto::AutomationIdProperty, 'SidebarTree')
+    foreach ($window in @(Get-AppWindows)) {
+        $tree = $window.FindFirst($TreeScope::Descendants, $treeCondition)
+        if (-not $tree) { continue }
+        $scroll = $null
+        if (-not $tree.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$scroll)) { return $null }
+        if (-not $scroll.Current.VerticallyScrollable) { return $null }
+        $step = [Math]::Max(2.0, $scroll.Current.VerticalViewSize * 0.8)
+        for ($at = 0.0; $at -lt 100 + $step; $at += $step) {
+            $scroll.SetScrollPercent([System.Windows.Automation.ScrollPattern]::NoScroll, [Math]::Min(100.0, $at))
+            Start-Sleep -Milliseconds 120
+            $found = $tree.FindFirst($TreeScope::Descendants, $condition)
+            if ($found) { return $found }
+        }
+        return $null
+    }
+    return $null
+}
+
 function Find-Element {
     $conditions = @()
     if ($Id) { $conditions += New-Object System.Windows.Automation.PropertyCondition ($Auto::AutomationIdProperty, $Id) }
@@ -98,6 +126,10 @@ function Find-Element {
         $found = $root.FindFirst(($TreeScope::Element -bor $TreeScope::Descendants), $condition)
         if ($found) { return $found }
     }
+    # The sidebar only builds the rows that are on screen: one that is
+    # further down exists for automation once it has been scrolled to.
+    $inTree = Find-InSidebar $condition
+    if ($inTree) { return $inTree }
     throw "no element with $(if ($Id) { "id '$Id'" }) $(if ($Name) { "name '$Name'" })"
 }
 
@@ -215,6 +247,26 @@ switch ($Action) {
         $element = Find-Element
         $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Text)
         Write-Host "set: $(Describe $element)"
+    }
+    'focus' {
+        $element = Find-Element
+        $element.SetFocus()
+        Write-Host "focused: $(Describe $element)"
+    }
+    'value' {
+        $element = Find-Element
+        Write-Host $element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+    }
+    'press' {
+        # The buttons of the RDP control's certificate warning are plain
+        # windows without automation patterns. BM_CLICK presses one.
+        $element = Find-Element
+        $hwnd = [IntPtr]$element.Current.NativeWindowHandle
+        if ($hwnd -eq [IntPtr]::Zero) { throw "no window of its own: $(Describe $element)" }
+        # Described first: the dialog, and the element with it, is gone afterwards.
+        $what = Describe $element
+        [ToolboxE2E.Input]::PostMessage($hwnd, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+        Write-Host "pressed: $what"
     }
     'click' {
         $element = Find-Element

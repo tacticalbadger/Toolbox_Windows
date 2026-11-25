@@ -29,6 +29,8 @@ internal partial class SidebarView : UserControl, IDragTarget
     private SidebarNode? dropTarget;
     private SidebarNode? pressedNode;
     private Point pressedAt;
+    /// <summary>The row selected last, kept when its node goes away (a renamed folder gets a new one).</summary>
+    private string? lastSelectedId;
 
     /// <summary>Expands every node on the first load (testing aid: <c>--expand-all</c>).</summary>
     public bool ExpandAllOnLoad { get; set; }
@@ -39,6 +41,7 @@ internal partial class SidebarView : UserControl, IDragTarget
         expanded = new HashSet<string>(AppSettings.Shared.ExpandedNodes ?? [LibraryId]);
         Tree.ItemsSource = roots;
         model.Changed += Rebuild;
+        model.FolderMoved += OnFolderMoved;
         sync.Changed += Rebuild;
         Loaded += (_, _) => DragController.Register(this);
         Unloaded += (_, _) => DragController.Unregister(this);
@@ -65,6 +68,48 @@ internal partial class SidebarView : UserControl, IDragTarget
         assign(node);
         used.Add(id);
         return node;
+    }
+
+    /// <summary>
+    /// A folder was renamed or moved. A folder node's id holds its path, so
+    /// the tree has just been rebuilt with new, closed nodes in its place:
+    /// what was open under the old path is opened under the new one (and
+    /// saved that way, so the next start agrees), and the folder is selected
+    /// again if it was.
+    /// </summary>
+    private void OnFolderMoved(string from, string to)
+    {
+        var moved = MovedIds(expanded.Append(lastSelectedId ?? ""), from, to);
+        if (moved.Count == 0) return;
+        var followed = 0;
+        foreach (var (oldId, newId) in moved)
+        {
+            if (!expanded.Remove(oldId)) continue;
+            expanded.Add(newId);
+            followed++;
+        }
+        AppSettings.Shared.ExpandedNodes = expanded.Order().ToList();
+        AppSettings.Shared.SaveSoon();
+        Log.Info($"sidebar: folder {from} -> {to}; {followed} open folder{(followed == 1 ? "" : "s")} followed");
+        Rebuild();
+        var reselect = moved.FirstOrDefault(m => m.Old == lastSelectedId).New;
+        if (reselect is not null && Tree.SelectedItem is null && cache.TryGetValue(reselect, out var node)) node.IsSelected = true;
+    }
+
+    /// <summary>
+    /// The folder node ids among <paramref name="ids"/> that lie at or under
+    /// <paramref name="from"/>, each with the id it has under <paramref name="to"/>.
+    /// </summary>
+    internal static IReadOnlyList<(string Old, string New)> MovedIds(IEnumerable<string> ids, string from, string to)
+    {
+        const string prefix = "folder:";
+        var moved = new List<(string, string)>();
+        foreach (var id in ids.Distinct())
+        {
+            if (!id.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            if (FolderPath.Moved(id[prefix.Length..], from, to) is { } path) moved.Add((id, prefix + path));
+        }
+        return moved;
     }
 
     private bool Matches(params string?[] fields)
@@ -209,6 +254,7 @@ internal partial class SidebarView : UserControl, IDragTarget
     {
         // The heading is not a thing to select.
         if (e.NewValue is SidebarNode { IsGroup: true } group) group.IsSelected = false;
+        else if (e.NewValue is SidebarNode node) lastSelectedId = node.Id;
     }
 
     // ----- Actions -----

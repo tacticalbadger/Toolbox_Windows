@@ -21,6 +21,16 @@ public partial class App : Application
         return null;
     }
 
+    /// <summary>The <paramref name="count"/> values following <paramref name="flag"/>, if they are all there.</summary>
+    internal static string[]? Values(string flag, int count)
+    {
+        for (var i = 0; i + count < Arguments.Count; i++)
+        {
+            if (Arguments[i] == flag) return Arguments.Skip(i + 1).Take(count).ToArray();
+        }
+        return null;
+    }
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -34,9 +44,25 @@ public partial class App : Application
             args.SetObserved();
         };
 
+        // A freshly unpacked copy started by the running app to install
+        // itself (see UpdateInstaller): it swaps the files, starts the app
+        // from its usual folder, and is done. It opens no store and no window.
+        if (e.Args is ["--apply-update", var installed, var oldProcess] && int.TryParse(oldProcess, out var processId))
+        {
+            Log.Info($"Toolbox {AppInfo.Display} started to install itself into {installed}");
+            installing = true;
+            var problem = UpdateInstaller.Apply(installed, processId);
+            if (problem is not null) Prompts.Error("The update was not installed", problem);
+            Shutdown();
+            return;
+        }
+
         Log.Info($"Toolbox {AppInfo.Display} starting (core {CoreApi.CoreVersion()}, {Environment.OSVersion.VersionString}, " +
                  $"{System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture})");
         Log.Info($"store: {AppPaths.StorePath}");
+
+        // Shells of local terminals that an earlier run left without a window when it was killed.
+        Terminal.TerminalLedger.EndOrphans();
 
         var window = new MainWindow();
         MainWindow = window;
@@ -46,10 +72,19 @@ public partial class App : Application
         await ProviderSync.Shared.SyncAllAsync(automatic: true);
         ProviderSync.Shared.ScheduleAutoRefresh();
         window.RunLaunchArguments();
+        Updates.Shared.Start(window);
     }
+
+    /// <summary>This process only installs an update: it has no settings to save.</summary>
+    private bool installing;
 
     protected override void OnExit(ExitEventArgs e)
     {
+        if (installing)
+        {
+            base.OnExit(e);
+            return;
+        }
         AppSettings.Shared.Save();
         Log.Info("Toolbox exiting");
         base.OnExit(e);
@@ -85,6 +120,16 @@ internal static class AppInfo
 
     /// <summary>What to show a person: "0.1.0 (build 4)".</summary>
     public static string Display => Build > 0 ? $"{Version} (build {Build})" : Version;
+
+    /// <summary>
+    /// Whether this is a build made for handing out (tools\build.ps1 package).
+    /// Only such a build looks for updates: one made for trying things must
+    /// not be replaced by a release.
+    /// </summary>
+    public static bool IsPackaged { get; } = typeof(AppInfo).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+        .OfType<System.Reflection.AssemblyMetadataAttribute>()
+        .Any(a => a.Key == "ToolboxPackaged" && a.Value == "true");
 
     private static int ReadBuild()
     {

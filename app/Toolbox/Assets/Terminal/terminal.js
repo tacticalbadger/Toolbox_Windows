@@ -3,10 +3,13 @@
 // App -> page:  {t:'o', d:<base64 bytes>}   output from the session
 //               {t:'theme', theme, fontSize, fontFamily}
 //               {t:'focus'}  {t:'paste', d:<text>}
+//               {t:'find'}  {t:'findNext'}  {t:'findPrevious'}   the find bar
+//               {t:'findDemo', d:<text>}   testing aid: search for that and report
 // Page -> app:  {t:'ready', cols, rows}  {t:'size', cols, rows}
 //               {t:'i', d:<text>}  {t:'b', d:<binary string>}   keyboard and mouse input
 //               {t:'title', d}  {t:'bell'}  {t:'focus'}  {t:'link', d:<url>}
 //               {t:'copy', d:<text>}  {t:'paste'}   the clipboard is handled by the app
+//               {t:'found', index, count, open}   what a search found (for the log)
 'use strict';
 (() => {
   const bridge = window.chrome && window.chrome.webview;
@@ -17,7 +20,10 @@
     scrollback: 10000,
     fontFamily: '"Cascadia Mono", Consolas, "Courier New", monospace',
     fontSize: 14,
-    allowProposedApi: false,
+    // Lets this page's own code use xterm.js interfaces still marked as
+    // proposed: the search addon highlights its matches with one of them.
+    // It gives programs in the terminal nothing new.
+    allowProposedApi: true,
     // Right click copies or pastes (below), like Windows Terminal.
     rightClickSelectsWord: false,
   });
@@ -108,6 +114,94 @@
     if (copySelection()) term.clearSelection(); else post({ t: 'paste' });
   });
 
+  // ----- Find -----
+  //
+  // Searches what is on screen and everything that has scrolled out of view.
+  // Enter and Shift+Enter (or F3 and Shift+F3 while the bar is open) step
+  // through the matches, Esc closes the bar.
+
+  const search = new SearchAddon.SearchAddon();
+  term.loadAddon(search);
+  const findBar = document.getElementById('find');
+  const findText = document.getElementById('find-text');
+  const findCount = document.getElementById('find-count');
+  const findOptions = {
+    decorations: {
+      matchBackground: '#4a3a12',
+      matchOverviewRuler: '#4a3a12',
+      activeMatchBackground: '#8a5a00',
+      activeMatchBorder: '#ffd24d',
+      activeMatchColorOverviewRuler: '#ffd24d',
+    },
+  };
+  let lastFound = { index: -1, count: 0 };
+
+  search.onDidChangeResults(({ resultIndex, resultCount }) => {
+    lastFound = { index: resultIndex, count: resultCount };
+    findBar.classList.toggle('none', resultCount === 0 && findText.value !== '');
+    if (findText.value === '') findCount.textContent = '';
+    else if (resultCount === 0) findCount.textContent = 'No results';
+    // Past the number of matches the addon keeps track of, it stops counting.
+    else if (resultIndex < 0) findCount.textContent = `${resultCount}+`;
+    else findCount.textContent = `${resultIndex + 1} of ${resultCount}`;
+  });
+
+  const findStep = (backwards, incremental) => {
+    if (findText.value === '') {
+      search.clearDecorations();
+      findCount.textContent = '';
+      findBar.classList.remove('none');
+      lastFound = { index: -1, count: 0 };
+      return;
+    }
+    if (backwards) search.findPrevious(findText.value, findOptions);
+    else search.findNext(findText.value, { ...findOptions, incremental });
+  };
+
+  const showFind = () => {
+    findBar.hidden = false;
+    // A word or phrase that is selected is what one most likely wants to find.
+    const selected = term.getSelection();
+    if (selected && !selected.includes('\n') && selected.length <= 200) findText.value = selected;
+    findText.focus();
+    findText.select();
+    findStep(false, true);
+  };
+
+  const hideFind = () => {
+    if (findBar.hidden) return;
+    findBar.hidden = true;
+    search.clearDecorations();
+    term.focus();
+  };
+
+  findText.addEventListener('input', () => findStep(false, true));
+  findText.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      findStep(event.shiftKey, false);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      hideFind();
+    }
+  });
+  document.getElementById('find-next').addEventListener('click', () => findStep(false, false));
+  document.getElementById('find-previous').addEventListener('click', () => findStep(true, false));
+  document.getElementById('find-close').addEventListener('click', hideFind);
+  // F3 belongs to the program in the terminal, except while the bar is open.
+  window.addEventListener('keydown', (event) => {
+    if (findBar.hidden) return;
+    if (event.key === 'F3') {
+      event.preventDefault();
+      event.stopPropagation();
+      findStep(event.shiftKey, false);
+    } else if (event.key === 'Escape' && document.activeElement !== findText) {
+      event.preventDefault();
+      event.stopPropagation();
+      hideFind();
+    }
+  }, true);
+
   // ----- Messages from the app -----
 
   const applyTheme = (message) => {
@@ -126,6 +220,18 @@
         case 'theme': applyTheme(message); break;
         case 'focus': term.focus(); break;
         case 'paste': term.paste(message.d); break;
+        case 'find': showFind(); break;
+        case 'findNext':
+        case 'findPrevious':
+          if (findBar.hidden) showFind(); else findStep(message.t === 'findPrevious', false);
+          break;
+        case 'findDemo':
+          // Testing aid: what the bar would find, told to the app for its log.
+          findBar.hidden = false;
+          findText.value = message.d;
+          findStep(false, true);
+          setTimeout(() => post({ t: 'found', index: lastFound.index, count: lastFound.count, open: !findBar.hidden }), 300);
+          break;
       }
     });
   }
