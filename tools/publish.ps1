@@ -254,13 +254,35 @@ function Get-StatusCode($errorRecord) {
     return 0
 }
 
+# Attaches a file to a release that is still a draft. A file the draft
+# already holds whole (GitHub gives its SHA-256) is left as it is, so a run
+# that carries on with a draft does not send everything again; anything else
+# of that name, a broken-off upload included, is removed first. An upload
+# that breaks off is tried again: the first one of 0.3.1, some 800 MB in
+# all, lost its connection part-way.
 function Send-Asset($release, [System.IO.FileInfo]$file, [string]$contentType) {
-    foreach ($asset in @($release.assets | Where-Object { $_.name -eq $file.Name })) {
-        Invoke-GitHub 'Delete' "$api/releases/assets/$($asset.id)" | Out-Null
-    }
     $upload = ($release.upload_url -replace '\{.*$', '') + '?name=' + [Uri]::EscapeDataString($file.Name)
-    Write-Host ("uploading {0} ({1:N0} MB)" -f $file.Name, ($file.Length / 1MB))
-    Invoke-RestMethod -Method Post -Uri $upload -Headers $headers -ContentType $contentType -InFile $file.FullName -TimeoutSec 3600 | Out-Null
+    $digest = 'sha256:' + (Get-FileHash $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    for ($attempt = 1; ; $attempt++) {
+        # Windows PowerShell hands a list from GitHub over as one object: taken apart here.
+        $there = @(Invoke-GitHub 'Get' "$api/releases/$($release.id)/assets?per_page=100" | ForEach-Object { $_ } | Where-Object { $_.name -eq $file.Name })
+        $whole = @($there | Where-Object { $_.state -eq 'uploaded' -and $_.PSObject.Properties['digest'] -and $_.digest -eq $digest })
+        if ($whole.Count -gt 0) {
+            Write-Host "already there, and the same file: $($file.Name)"
+            return
+        }
+        foreach ($asset in $there) { Invoke-GitHub 'Delete' "$api/releases/assets/$($asset.id)" | Out-Null }
+        Write-Host ("uploading {0} ({1:N0} MB)" -f $file.Name, ($file.Length / 1MB))
+        try {
+            Invoke-RestMethod -Method Post -Uri $upload -Headers $headers -ContentType $contentType -InFile $file.FullName -TimeoutSec 3600 | Out-Null
+            return
+        }
+        catch {
+            if ($attempt -ge 4) { throw }
+            Write-Host "the upload broke off ($($_.Exception.Message)); trying again"
+            Start-Sleep -Seconds 10
+        }
+    }
 }
 
 $existing = $null
@@ -290,11 +312,18 @@ if ($null -ne $existing) {
     Send-Files $release
 }
 else {
-    # A draft is not found by its tag, only in the list.
-    $draft = @(Invoke-GitHub 'Get' "$api/releases?per_page=100") | Where-Object { $_.draft -and $_.tag_name -eq $Tag } | Select-Object -First 1
+    # A draft is not found by its tag, only in the list. Windows PowerShell
+    # hands a list from GitHub over as one object, not release by release;
+    # sent through a script block it comes apart into its releases.
+    $releases = @(Invoke-GitHub 'Get' "$api/releases?per_page=100" | ForEach-Object { $_ })
+    $draft = $releases | Where-Object { $_.draft -and $_.tag_name -eq $Tag } | Select-Object -First 1
     if ($null -ne $draft) {
         Step "Carrying on with the draft of $Tag"
-        $release = Invoke-GitHub 'Patch' "$api/releases/$($draft.id)" @{ name = $title; body = $notes; prerelease = [bool]$Prerelease }
+        # The tag is named in every change to a draft. The one time a draft
+        # was carried on with (0.3.1) it was changed without, and came out
+        # published under a placeholder tag ("untagged-..."), where no
+        # installed copy looks for the packages.
+        $release = Invoke-GitHub 'Patch' "$api/releases/$($draft.id)" @{ tag_name = $Tag; name = $title; body = $notes; prerelease = [bool]$Prerelease }
         $release = Invoke-GitHub 'Get' "$api/releases/$($draft.id)"
     }
     else {
@@ -308,9 +337,21 @@ else {
         }
     }
     Send-Files $release
-    # Published last: nothing can be added to an immutable release.
+    # Published last: nothing can be added to an immutable release, and its
+    # tag cannot be changed. So the draft is looked at once more first: it
+    # must still be a draft of this tag, with every file whole.
+    $ready = Invoke-GitHub 'Get' "$api/releases/$($release.id)"
+    if ($ready.tag_name -ne $Tag) {
+        throw "the draft is for the tag '$($ready.tag_name)', not $Tag. Not published. Delete the draft on the Releases page and run this again."
+    }
+    $unfinished = @($ready.assets | Where-Object { $_.state -ne 'uploaded' } | ForEach-Object { $_.name })
+    if ($unfinished.Count -gt 0) { throw "the draft holds files that did not arrive whole ($($unfinished -join ', ')). Not published; run this again." }
     Step "Publishing $Tag"
-    $release = Invoke-GitHub 'Patch' "$api/releases/$($release.id)" @{ draft = $false }
+    $latest = if ($Prerelease) { 'false' } else { 'true' }
+    $release = Invoke-GitHub 'Patch' "$api/releases/$($release.id)" @{ draft = $false; tag_name = $Tag; make_latest = $latest }
+    if ($release.tag_name -ne $Tag) {
+        throw "GitHub published the release under the tag '$($release.tag_name)', not $Tag ($($release.html_url)). Installed copies look for the packages under $Tag and will not find them: this needs putting right at once (see CLAUDE.md, the 0.3.1 release)."
+    }
 }
 
 $published = Invoke-GitHub 'Get' "$api/releases/tags/$Tag"

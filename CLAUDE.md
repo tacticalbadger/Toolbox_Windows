@@ -198,7 +198,7 @@ Swift tree → C# tree: `App/` (delegate, menu) → `App.xaml.cs`,
   sign, verify, export, import. `tools/e2e/` — `make-fixture.ps1`,
   `make-rdp-server.ps1`, `servers.ps1`, `launch.ps1`, `capture.ps1`,
   `ui.ps1` (UI Automation and synthetic input), `update-rehearsal.ps1`,
-  `check-disc.ps1`, `check-installer.ps1`.
+  `check-disc.ps1`, `check-installer.ps1`, `check-published-update.ps1`.
 - `VERSION` holds the marketing version; the build number is the commit
   count (`FileVersion` 0.1.0.N, shown in Help ▸ About and the log's first
   line).
@@ -316,7 +316,28 @@ tools\publish.ps1 -DryRun                      # then without -DryRun
 
 `package` removes that architecture's installer, image and zip and the
 feed before it builds, so `feed` comes after both. An ISO is some 260 MB
-and an installer some 60: a release is about 800 MB to upload.
+and an installer some 60: a release is about 800 MB to upload, and an
+upload of that size breaks off now and then ("the underlying connection
+was closed", three times on 2026-11-25, each time on a 261 MB image).
+`publish.ps1` tries a broken upload again, and a second run carries on
+with the draft, skipping files that are already there whole.
+
+**A draft release is never changed or published without its tag being
+named.** This is what went wrong with 0.3.1 (see Current state): the
+first upload broke off, the second run carried on with the draft,
+changed its title and notes without naming the tag, and published it.
+GitHub published it under a placeholder tag, `untagged-<hex>`, made a
+git tag of that name, and, releases being immutable here, that could
+not be put right afterwards. As the newest release it served the feed,
+and the feed sent every copy to `releases/download/v0.3.1/…`, where
+there was nothing. `publish.ps1` now names the tag in every change to a
+draft, reads the draft back before publishing and refuses one whose tag
+is not `v<version>` or whose files are not whole, publishes with
+`tag_name` and `make_latest`, and stops loudly if what GitHub answers
+has another tag. If a release ever comes out wrong again: publish the
+right one at once (the tag is still free if nothing was published under
+it), since every hour it is missing is an hour installed copies are
+offered an update they cannot fetch.
 
 Releases on this repository are immutable (a GitHub setting): once one is
 published its files and tag are fixed, and the tag name can never be used
@@ -326,12 +347,16 @@ number: read the dry run, and test the packages first. **Publishing is
 also the moment installed copies start being offered the version**, so
 the packages have to be right before it, not after.
 
-After a release, the nearest thing to a real update is a test copy told
-to look at the real feed: copy a package's folder somewhere, start it
-with `tools\e2e\launch.ps1 -Exe <copy>\Toolbox.exe --updater-feed github
---updater-pretend-build 1 --demo-update`, and it is offered the published
-version, with the real key (add `--demo-update-install` to let it
-install itself without the dialog).
+After a release, run `tools\e2e\check-published-update.ps1 -From <the
+version before>` for each architecture (`-Arch x64` for the other): the
+earlier release's own zip (from `build\release`, or downloaded from its
+release), unpacked and unchanged, takes the published update from GitHub
+and is compared file for file with the folder the new release was made
+from. Nothing in it is made up. By hand, for a look at the dialog: copy a
+package's folder somewhere and start it with `tools\e2e\launch.ps1 -Exe
+<copy>\Toolbox.exe --updater-feed github --updater-pretend-build 1
+--demo-update` (add `--demo-update-install` to let it install itself
+without the dialog).
 
 ## End-to-end checks (no real hosts needed)
 
@@ -345,6 +370,7 @@ tools\e2e\ui.ps1 tree                 # also: find, invoke, expand, select, setv
 tools\e2e\update-rehearsal.ps1        # a whole self-update from a test feed with a test key, and what must be refused
 tools\e2e\check-disc.ps1              # a packaged disc image mounted as a drive, and the app started from it (-Arch x64 for the other)
 tools\e2e\check-installer.ps1         # a packaged installer run for real: install, self-update, uninstall (-Arch x64; -Keep keeps its logs)
+tools\e2e\check-published-update.ps1 -From 0.3.0   # AFTER a release: that earlier release takes the published update from GitHub (-Arch x64)
 tools\e2e\servers.ps1 stop
 ```
 
@@ -871,9 +897,10 @@ the web (what SmartScreen says to an unsigned installer); the disc image
 double-clicked in File Explorer; the desktop shortcut option; an install
 over an older installed version (there is no older installer yet).
 
-New in 0.3.0 and not verified: an update between two published releases
-(0.3.0 to 0.3.1 is the first there can be; see Current state for whether
-it has been tried); an update of
+New in 0.3.0 and not verified (an update between two published releases
+no longer is: 0.3.0 took 0.3.1 from GitHub on both architectures, see
+Current state; but only on this PC, against the fixture, and without the
+dialog): the update window under a hand; an update of
 a copy in a folder it may not write to; cancelling a download; the
 update question when sessions are open. For local terminals: what the
 user's other Windows Terminal windows do when Toolbox is killed outright
@@ -1005,6 +1032,11 @@ the same installer work in its own 0.3.1; its notes say how that went).
   with the zips and the feed; its install notes are rewritten.
 - `tools\e2e\check-disc.ps1` and `check-installer.ps1`.
 - README, the security review (an addendum), release notes for 0.3.1.
+- Added while releasing (commit after the tag): `publish.ps1` tries a
+  broken upload again, skips files a draft already holds whole, takes a
+  list of releases apart properly, and never changes or publishes a
+  draft without its tag (see the release record below);
+  `tools\e2e\check-published-update.ps1`.
 
 Verified before the commit, on trial packages built from the working
 tree (build 11): 43 Rust tests, 109 app tests; `package` for both
@@ -1023,7 +1055,61 @@ an uninstall that leaves only a file of the user's own.
 Not verified: see "Not verified against real infrastructure" (the
 installer was never run with its pages showing, or anywhere but here).
 
+**Released: v0.3.1 (build 13)**, 2026-11-25,
+https://github.com/tacticalbadger/Toolbox_Windows/releases/tag/v0.3.1,
+the tag on `b70170a`: for each of win-arm64 and win-x64 an installer
+(57 and 63 MB), a disc image (273 and 266 MB) and the zip, with
+`SHA256SUMS`, `update.json` and `update.json.sig`. It did not go out in
+one go, and what happened is worth knowing:
+
+1. The first release build (commit `78e315e`, build 12) stopped after
+   writing the ARM64 image: the folder it was made from could not be
+   removed yet. Fixed in `b70170a` (`Remove-BusyFolder`), which made the
+   release build 13. Both packages of build 13 passed `check-disc.ps1`
+   (16) and `check-installer.ps1` (29) before anything was sent.
+2. The first `publish.ps1` run lost its connection while uploading the
+   ARM64 image, leaving a draft. Nothing was out.
+3. **The second run published the release under the wrong tag.** It
+   carried on with the draft, and GitHub published it as
+   `untagged-a6b2839dffc8179f201a` (see "A draft release is never
+   changed…" under Everyday commands). For a while that was the latest
+   release: copies of 0.3.0 that looked were offered 0.3.1 and could not
+   fetch it, since the feed sends them to the `v0.3.1` release, which did
+   not exist. A copy that tried stayed 0.3.0, unharmed. How long: from
+   the publishing of the stray release to that of the right one, well
+   under two hours, most of it upload time (this machine's clock is not
+   to be trusted for the exact figure).
+4. The third run, with the script hardened first, made a new draft for
+   `v0.3.1`, uploaded everything again (two more uploads broke off and
+   were tried again by the script), checked the draft's tag and files,
+   and published. The tag `v0.3.1` had been pushed by the first run and
+   was still free, because nothing had been published under it.
+
+After publishing, checked from outside: `v0.3.1` is the latest release,
+not a draft, on the commit it was built from; GitHub's SHA-256 for each
+of the nine files is the local file's; the four kinds of download answer
+at their `v0.3.1` addresses; and `releases/latest/download/update.json`
+serves the feed that was built. Then **the first update between two
+published releases**, with nothing made up
+(`tools\e2e\check-published-update.ps1 -From 0.3.0`, new, 8 checks, on
+both architectures, x64 under emulation): the released 0.3.0 zip,
+unpacked and started against the fixture with `--updater-feed github`,
+found 0.3.1 on GitHub, fetched the zip over HTTPS, checked it against
+the signed feed, installed itself, came back as 0.3.1 (build 13), file
+for file the folder the release was made from, and was offered nothing
+when it looked again.
+
+**The stray release is still there**: "Toolbox 0.3.1 (duplicate under a
+wrong tag: use v0.3.1)", with the same nine files and notes that point at
+v0.3.1, and a git tag `untagged-a6b2839dffc8179f201a` on `b70170a`. It is
+harmless and it is not the latest. It was left for the owner to delete
+(Releases page ▸ that entry ▸ Delete; then the tag, if GitHub allows it),
+as 0.2.0 was left in its day: a release is not deleted on a session's own
+say.
+
 For the owner, new with 0.3.1:
+- Delete the duplicate release named above if you do not want it on the
+  page, or say so and a session does it.
 - Inno Setup is free to use, and its authors ask commercial users to buy
   a licence (https://jrsoftware.org/isorder.php). Whether handing these
   builds to coworkers counts is yours to decide.

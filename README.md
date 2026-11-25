@@ -111,6 +111,7 @@ tools\build.ps1 feed                       # update.json and its signature: what
 tools\e2e\check-disc.ps1                   # the disc image opened as a drive, the app started from it (-Arch x64 for the other)
 tools\e2e\check-installer.ps1              # the installer run for real: install, self-update, uninstall (-Arch x64 likewise)
 tools\publish.ps1                          # GitHub Release v<version> with all of them, SHA256SUMS and the feed
+tools\e2e\check-published-update.ps1 -From <previous version>   # afterwards: that release takes the new one from GitHub
 ```
 
 A package is a folder with everything inside, the .NET runtime included,
