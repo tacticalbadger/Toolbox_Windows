@@ -383,8 +383,8 @@ it. The certificate warning of the RDP test servers is answered with
 `update-rehearsal.ps1` needs `build.ps1 app` and the fixture, makes
 `build\e2e-update`, and removes it when it passes. What it proves and
 what it does not is in its header; in short, everything but the download
-over HTTPS, which `--updater-feed github` covers once a release with a
-feed exists.
+over HTTPS, which `--updater-feed github` covers (done once against
+v0.3.0, see Current state).
 
 **The RDP test server** is the Mac repo's IronRDP one. It is not in this
 repo: `make-rdp-server.ps1` fetches its three source files from the
@@ -951,15 +951,34 @@ For the owner:
 
 Next: VNC, then signing and an installer.
 
-Released: **v0.3.0 (build 10)** is published from this commit as two
-self-contained, unsigned zips (win-arm64, win-x64) with `SHA256SUMS`,
-`update.json` and `update.json.sig`. It is the first release an installed
-copy can find by itself, and so the last one anybody downloads by hand:
-0.2.1 and earlier cannot be told that it exists. If this paragraph is
-still here but the Releases page has no v0.3.0 with five files, the
-release step did not finish: `tools\build.ps1 core assets package`,
-`tools\build.ps1 core package -Arch x64`, `tools\build.ps1 feed`,
-`tools\publish.ps1` (it carries on with a draft it finds).
+Released: **v0.3.0 (build 10)** is published (2026-11-25; the tag is on
+`5d4b3f1`) as two self-contained, unsigned zips (win-arm64, win-x64)
+with `SHA256SUMS`, `update.json` and `update.json.sig`. It is the first
+release an installed copy can find by itself, and so the last one anybody
+downloads by hand: 0.2.1 and earlier cannot be told that it exists.
+
+Before publishing, on the packages as built: each ran against the fixture
+and the local servers (SSH, a file browser and a local terminal, each in
+a tab; x64 under emulation), and a copy of each, told it was build 1 and
+pointed at `build\release` as its feed, found 0.3.0, checked the real
+signature with the key in the app, took the real zip, installed itself
+and started again with exactly the package's files.
+
+After publishing: the five files downloaded back from the release match
+the local ones byte for byte, the release is the latest and not a draft,
+its tag points at the commit it was built from, and the feed served at
+`releases/latest/download/update.json` carries the key's signature. Then
+the nearest thing to a real update that can be had before a second
+release exists: the downloaded arm64 zip was unpacked, started as "build
+1" with `--updater-feed github`, found 0.3.0 on GitHub, downloaded the
+published zip over HTTPS, verified it, installed itself, and afterwards
+held exactly the published package's files; started again as what it is,
+it was offered nothing ("nothing newer in the feed"). Only the old copy's
+build number was made up.
+
+The dev build in `build\app`, the packages in `build\release` and the
+fixture are still on the dev PC. (The Mac's rule is to remove `build/`
+after every release; nobody has said so for this repository.)
 
 **License, 2026-11-23, on the owner's word and pushed:** `LICENSE` added
 (proprietary, see Conventions), a License section in `README.md`, and the
